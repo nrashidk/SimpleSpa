@@ -232,7 +232,7 @@ export default function AdminLogin() {
                   Your application is pending for review. You'll be able to login with your email and password once it's been approved.
                 </p>
               </div>
-              <Button onClick={() => setShowRegistration(false)} variant="outline" data-testid="button-back-to-login">
+              <Button onClick={() => { setShowRegistration(false); setApplicationSubmitted(false); }} variant="outline" data-testid="button-back-to-login">
                 Back to Login
               </Button>
             </CardContent>
