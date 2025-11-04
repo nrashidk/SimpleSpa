@@ -76,7 +76,16 @@ export default function AdminLogin() {
         throw new Error(data.message || "Login failed");
       }
 
-      // Check setup status to redirect appropriately
+      const loginData = await response.json();
+      
+      // Super admins bypass setup wizard and go straight to admin panel
+      if (loginData.user?.role === 'super_admin') {
+        toast({ title: "Login successful!" });
+        setLocation('/admin');
+        return;
+      }
+
+      // For regular admins, check setup status to redirect appropriately
       const setupStatusResponse = await fetch("/api/admin/setup/status", {
         credentials: "include"
       });
