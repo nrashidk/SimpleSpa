@@ -1,0 +1,103 @@
+Backend: Enforcing Approval + Wizard Flow & Registration Fields
+1. Admin Registration (add spaName, license upload)
+Schema update (PostgreSQL, Drizzle ORM, etc.):
+Add licenseUrl (or similar) to adminApplications:
+
+typescript
+// @shared/schema.ts
+export const adminApplications = pgTable("admin_applications", {
+  ...
+  licenseUrl: text("license_url"), // <-- NEW: Store the uploaded license file URL or path
+});
+And update the Zod schema if used:
+
+typescript
+export const insertAdminApplicationSchema = createInsertSchema(adminApplications).omit({
+  id: true, appliedAt: true,
+});
+API route/controller update:
+typescript
+// server/routes.ts
+app.post('/api/admin/register', async (req, res) => {
+  try {
+    const { name, email, password, spaName } = req.body;
+    const licenseUrl = req.body.licenseUrl || null; // add file upload processing as needed
+
+    // ...create pending admin user as before...
+
+    await storage.createAdminApplication({
+      userId: adminUser.id,
+      businessName: spaName,    // use spaName from the form
+      businessType: 'spa',
+      licenseUrl: licenseUrl,   // save license document
+      status: 'pending',
+    });
+    // ...respond with pending approval...
+  } catch (error) {
+    // ...error handling...
+  }
+});
+Add file upload middleware (e.g., multer) for license file uploads, saving URLs to licenseUrl.
+
+2. Approval Flow & Enforced Wizard
+Super Admin Approval
+Already present: super admin sets status: 'approved' on both the adminApplications and the user.
+
+Wizard Enforcement
+At login, after super admin approval, check:
+
+user.status === 'approved'
+
+user.adminSpaId != null
+
+spa.setupComplete === true
+
+If not, redirect/block except for setup wizard API/route.
+
+Example (Express-like middleware):
+
+typescript
+// server/middleware/enforceSetup.ts
+export function enforceSetupWizard(req, res, next) {
+  const user = req.user; // get from auth/session
+  // Always allow setup wizard routes!
+  if (req.path.startsWith('/api/admin/setup')) return next();
+  if (user.role === 'admin') {
+    const spa = /* fetch spa using user.adminSpaId */;
+    if (!spa || !spa.setupComplete) {
+      return res.status(403).json({ setupRequired: true, message: "Complete the setup wizard first." });
+    }
+  }
+  next();
+}
+Register this globally before admin routes.
+
+Frontend/UI:
+Registration Form
+Add fields for spa name and license upload (file input).
+
+Send these to /api/admin/register
+
+licenseUrl = result of uploaded file, or use S3/cloud storage for file handling.
+
+Wizard Enforcement
+After login, call /api/admin/setup/status.
+
+If not setupComplete, redirect to /setup-wizard, block panel navigation.
+
+Only release navigation after wizard completion/final API call sets spa setupComplete: true.
+
+Summary of Flow
+Owner registers (spa name, admin info, license file).
+
+Super admin reviews and approves the spa and admin (with file/URL).
+
+Admin logs in:
+
+If setupComplete !== true, they’re firewall-blocked from all except wizard pages.
+
+UI and backend both redirect/forbid any access except the wizard.
+
+After finishing wizard:
+
+Spa is active, setupComplete = true, admin can now create staff, services, etc.

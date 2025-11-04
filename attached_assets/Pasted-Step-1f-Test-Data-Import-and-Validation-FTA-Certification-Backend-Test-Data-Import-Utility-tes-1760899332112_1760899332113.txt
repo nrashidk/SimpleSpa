@@ -1,0 +1,157 @@
+Step 1f: Test Data Import and Validation (FTA Certification)
+Backend: Test Data Import Utility (testDataImport.ts)
+
+typescript
+import { readFileSync } from 'fs';
+
+async function importFTATestData(filePath: string) {
+  const rawData = readFileSync(filePath, 'utf-8');
+  const data = JSON.parse(rawData); // Assuming JSON; for CSV/XML use respective parsers.
+
+  for (const tx of data.transactions) {
+    // Insert into transactions/productsales/loyaltycards/bookings, etc., depending on tx.type.
+    // Ensure mapping to your schema; validate fields.
+    await db.transactions.create({
+      data: {
+        ...tx,
+        createdAt: new Date(tx.date),
+        // map other fields as needed
+      }
+    });
+  }
+  return { success: true, count: data.transactions.length };
+}
+Validation:
+
+typescript
+function validateImportedDataEntry(entry) {
+  // Check for required fields, valid values, duplicates, etc.
+  if (!entry.type || !entry.amount || isNaN(entry.amount)) return false;
+  // Add more checks as required (invoiceNum, currency, valid taxCode, etc.)
+  return true;
+}
+Step 1g: VAT Aggregation (Report)
+Backend: VAT Report Aggregation
+
+typescript
+async function getVATAggregateReport(dateFrom, dateTo) {
+  // Sum all sources
+  const [bookingVAT, productVAT, loyaltyVAT] = await Promise.all([
+    db.bookings.aggregate({ _sum: { vatAmount: true }, where: { date: { gte: dateFrom, lte: dateTo } } }),
+    db.productsales.aggregate({ _sum: { vatAmount: true }, where: { saleDate: { gte: dateFrom, lte: dateTo } } }),
+    db.loyaltycards.aggregate({ _sum: { vatAmount: true }, where: { purchaseDate: { gte: dateFrom, lte: dateTo } } })
+  ]);
+  return {
+    totalVAT: (bookingVAT._sum.vatAmount || 0) + (productVAT._sum.vatAmount || 0) + (loyaltyVAT._sum.vatAmount || 0),
+    sources: { service: bookingVAT._sum.vatAmount, retail: productVAT._sum.vatAmount, loyalty: loyaltyVAT._sum.vatAmount }
+  };
+}
+Step 1h: FAF Export UI Button
+Frontend (React Example):
+
+tsx
+import { useState } from 'react';
+import axios from 'axios';
+
+export default function FafExportButton() {
+  const [loading, setLoading] = useState(false);
+  const [fileUrl, setFileUrl] = useState(null);
+  const handleExport = async () => {
+    setLoading(true);
+    const res = await axios.post('/api/admin/export-faf'); // Adjust endpoint as needed
+    setFileUrl(res.data.fileUrl); // Backend should send FAF file download URL
+    setLoading(false);
+  };
+  return (
+    <div>
+      <button onClick={handleExport} disabled={loading}>
+        {loading ? 'Exporting...' : 'Export FAF'}
+      </button>
+      {fileUrl && <a href={fileUrl} download>Download FAF</a>}
+    </div>
+  );
+}
+Backend Endpoint (Node.js/Express):
+
+typescript
+import { generateFAFExport } from './generateFAFExport';
+app.post('/api/admin/export-faf', async (req, res) => {
+  const filePath = await generateFAFExport();
+  res.json({ fileUrl: `/downloads/${filePath}` });
+});
+Step 2: Audit Trail & Internal Controls
+Step 2a: Amendment Logging
+Database: Amendment Table
+
+sql
+CREATE TABLE amendments (
+  id SERIAL PRIMARY KEY,
+  changeType VARCHAR(50),
+  recordId INTEGER,
+  previous JSONB,
+  current JSONB,
+  amendedBy INTEGER REFERENCES users(id),
+  amendDate TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+Backend Example:
+
+typescript
+async function logAmendment(type: string, recordId: number, previous: object, current: object, userId: number) {
+  await db.amendments.create({
+    data: { changeType: type, recordId, previous, current, amendedBy: userId }
+  });
+}
+Step 2b: Transaction Locking/Post-Period Journal Amendments
+Backend Example:
+
+typescript
+async function closePeriod(periodDate: Date) {
+  // Mark all transactions to lock against changes after period
+  await db.transactions.updateMany({ where: { date: { lte: periodDate } }, data: { locked: true }});
+}
+
+async function updateLockedRecord(recordId: number, updates: object, userId: number) {
+  const record = await db.transactions.findUnique({ where: { id: recordId }});
+  if (record.locked) throw new Error('Record is locked, use journal amendment.');
+  // ...apply update
+  await logAmendment('UPDATE', recordId, record, updates, userId);
+}
+Step 2c: Permissions and Access Controls
+Backend Example: User Model
+
+Add role/permission fields to users.
+
+Enforce password requirements and change on first login:
+
+typescript
+function validatePassword(password) {
+  const reg = /^(?=.*[A-Z])(?=.*\d)[A-Za-z\d]{8,}$/;
+  return reg.test(password);
+}
+Add password expiry columns, policy enforcement on user creation/login.
+
+Step 2d: Data Validation Example
+Validation logic in backend forms/endpoints:
+
+typescript
+function validateInvoice(invoice) {
+  if (!invoice.invoiceNum || !/^\d+$/.test(invoice.invoiceNum)) throw new Error('Invalid invoice number!');
+  // Check uniqueness, not empty fields, data ranges for amounts, etc.
+}
+Step 2e: Backup/Restore with Integrity Check
+Backend:
+
+Regularly backup database with hashes/checksums for each file.
+
+Test restores and verify hashes on load.
+
+Store backup logs for minimum required retention.
+
+Step 3+: Reporting UI, Docs, and Testing
+Build simple reports admin UI using your current React pattern, calling backend VAT and draft FAF endpoints.
+
+Prepare user/audit manual in Markdown or PDF describing:
+
+Data flows, FAF export, VAT logic, amendment process, permissions.
+
+Test all implemented features using FTA’s published test dataset and validation checklist.

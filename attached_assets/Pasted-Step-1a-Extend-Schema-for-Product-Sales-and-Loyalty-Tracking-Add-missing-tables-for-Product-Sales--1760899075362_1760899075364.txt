@@ -1,0 +1,133 @@
+Step 1a: Extend Schema for Product Sales and Loyalty Tracking
+Add missing tables for Product Sales and Loyalty Cards to database schema (drizzle.config.ts, migration SQL, or relevant ORM models).
+
+Add productsales Table
+sql
+CREATE TABLE productsales (
+  id SERIAL PRIMARY KEY,
+  customerId INTEGER REFERENCES customers(id),
+  productId INTEGER REFERENCES products(id),
+  quantity INTEGER,
+  unitPrice DECIMAL,
+  netAmount DECIMAL,
+  vatAmount DECIMAL,
+  totalPrice DECIMAL,
+  saleDate TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  invoiceId INTEGER REFERENCES invoices(id),
+  transactionId INTEGER REFERENCES transactions(id),
+  taxCode VARCHAR(20)
+);
+Add loyaltycards Table
+sql
+CREATE TABLE loyaltycards (
+  id SERIAL PRIMARY KEY,
+  customerId INTEGER REFERENCES customers(id),
+  cardType VARCHAR(50),
+  purchaseDate TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  netAmount DECIMAL,
+  vatAmount DECIMAL,
+  purchasePrice DECIMAL,
+  totalSessions INTEGER,
+  usedSessions INTEGER DEFAULT 0,
+  remainingSessions INTEGER,
+  expiryDate TIMESTAMP,
+  status VARCHAR(20),
+  invoiceId INTEGER REFERENCES invoices(id),
+  transactionId INTEGER REFERENCES transactions(id),
+  taxCode VARCHAR(20)
+);
+Add loyaltycardusage Table
+sql
+CREATE TABLE loyaltycardusage (
+  id SERIAL PRIMARY KEY,
+  loyaltyCardId INTEGER REFERENCES loyaltycards(id),
+  bookingId INTEGER REFERENCES bookings(id),
+  usedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  sessionValue DECIMAL
+);
+Update invoiceitems Table
+sql
+ALTER TABLE invoiceitems
+  ADD COLUMN netAmount DECIMAL,
+  ADD COLUMN vatAmount DECIMAL,
+  ADD COLUMN total DECIMAL,
+  ADD COLUMN taxCode VARCHAR(20);
+Step 1b: VAT Calculation Utility (TypeScript Example for Backend)
+Add a utility file (e.g., vatUtils.ts):
+
+typescript
+export function calculateVAT(inclusiveAmount: number, vatRate: number = 0.05) {
+  const net = inclusiveAmount / (1 + vatRate);
+  const vat = inclusiveAmount - net;
+  return {
+    netAmount: parseFloat(net.toFixed(2)),
+    vatAmount: parseFloat(vat.toFixed(2)),
+    total: parseFloat(inclusiveAmount.toFixed(2))
+  };
+}
+Step 1c: Invoice/Transaction Creation – Integrated VAT Fields
+Sample function in backend (createProductSale.ts):
+
+typescript
+import { calculateVAT } from './vatUtils';
+
+async function createProductSale({
+  customerId, productId, quantity, unitPrice, invoiceId, transactionId, taxCode
+}) {
+  const totalSale = quantity * unitPrice;
+  const { netAmount, vatAmount, total } = calculateVAT(totalSale);
+
+  await db.productsales.create({
+    data: {
+      customerId,
+      productId,
+      quantity,
+      unitPrice,
+      netAmount,
+      vatAmount,
+      totalPrice: total,
+      saleDate: new Date(),
+      invoiceId,
+      transactionId,
+      taxCode
+    }
+  });
+
+  // Add invoice item
+  await db.invoiceitems.create({
+    data: {
+      invoiceId,
+      description: `Product ${productId}`,
+      netAmount,
+      vatAmount,
+      total,
+      taxCode
+    }
+  });
+}
+Step 1d: Tax Code Enforcement (UI/Backend)
+Add options for tax code selection in creation forms (see previous reply for sample picker array).
+
+Step 1e: FAF Export Generator
+Stub for backend export (could be scheduled or via admin panel):
+
+typescript
+import { writeFileSync } from 'fs';
+
+export async function generateFAFExport() {
+  const transactions = await db.transactions.findMany({
+    include: { productsales: true, loyaltycards: true, bookings: true }
+  });
+
+  const rows = transactions.map(tx => [
+    tx.id, tx.type, tx.date,
+    tx.netAmount, tx.vatAmount, tx.totalPrice,
+    tx.currency || 'AED', tx.aedEquivalent || tx.totalPrice, tx.taxCode
+  ]);
+  const csvContent = [
+    'TransactionID,Type,Date,NetAmount,VATAmount,GrossAmount,Currency,AED_Equivalent,TaxCode',
+    ...rows.map(r => r.join(','))
+  ].join('\n');
+  writeFileSync('FTA_Audit_File.csv', csvContent);
+  return 'FTA_Audit_File.csv';
+}

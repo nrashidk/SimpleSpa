@@ -1,0 +1,77 @@
+Recommended Method: Tax-Exclusive (Method 1)
+Use “Retail prices excluding tax” as your primary method because:
+	1.	FTA Compliance: This is the standard method recognized by FTA
+	2.	Audit Trail: Clearer separation between base price and VAT amount
+	3.	Business Practice: Most UAE businesses display prices excluding VAT, then add VAT at checkout
+	4.	Invoice Requirements: FTA requires tax invoices to show the taxable amount and VAT separately
+Your VAT Calculator Should Include:
+Core Calculations
+
+For Sales (Output VAT):
+- Base Amount (excluding VAT)
+- VAT Amount = Base Amount × 0.05
+- Total Amount = Base Amount + VAT Amount
+
+For Purchases (Input VAT):
+- Same calculation for VAT paid on purchases
+
+Net VAT Liability:
+- Payable VAT = Output VAT - Input VAT
+
+Essential Features for FTA Compliance
+	1.	Support Multiple VAT Categories:
+	•	Standard rated (5%)
+	•	Zero-rated (0%) - exports, international transport, etc.
+	•	Exempt - residential property, financial services, etc.
+	1.	Record Keeping Requirements:
+	•	Transaction date and time
+	•	Customer/Supplier details (name, TRN if applicable)
+	•	Description of goods/services
+	•	Base amount (excluding VAT)
+	•	VAT rate applied
+	•	VAT amount
+	•	Total amount including VAT
+	•	Invoice/receipt number
+	•	Your Tax Registration Number (TRN)
+	1.	Tax Invoice Format (for transactions over AED 10,000):
+	•	Sequential invoice number
+	•	Your business details and TRN
+	•	Customer details and TRN (if registered)
+	•	Tax invoice designation
+	•	Date of supply
+	•	Description and quantity
+	•	Unit price (excluding VAT)
+	•	Taxable amount
+	•	VAT rate and amount
+	•	Total amount payable
+	1.	Simplified Tax Invoice (for transactions under AED 10,000):
+	•	Can have reduced information
+	•	Must still show VAT amount separately
+
+Critical FTA Audit Requirements
+	1.	Data Retention: Store all records for 5 years from the end of the tax period
+	2.	VAT Return Calculations:
+
+Total Output VAT (sales)
+- Total Input VAT (purchases)
+= Net VAT Payable/Refundable
+
+	3.	Reporting Fields
+
+Input Fields:
+□ Transaction Type: Sale / Purchase
+□ Amount Entry: Excluding VAT / Including VAT
+□ Base Amount: [____] AED
+□ VAT Category: Standard (5%) / Zero-rated (0%) / Exempt
+□ Description: [________]
+
+Calculated Output:
+- Base Amount: AED X.XX
+- VAT Amount (5%): AED X.XX
+- Total Amount: AED X.XX
+
+Save to Records with:
+- Date, Invoice #, Customer/Supplier details
+
+Key Takeaway
+Use Tax-Exclusive as your default method - it’s cleaner for accounting, easier to audit, and aligns with FTA requirements. Ensure every transaction clearly shows the breakdown of base amount + VAT amount = total amount, and maintain complete records for 5 years.

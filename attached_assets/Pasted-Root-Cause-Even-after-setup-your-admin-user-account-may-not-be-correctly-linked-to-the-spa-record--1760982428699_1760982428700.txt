@@ -1,0 +1,60 @@
+Root Cause
+Even after setup, your admin user account may not be correctly linked to the spa record in the database via the adminSpaId field.
+
+All admin API actions fetch the spa context from your user’s adminSpaId (in the users table), and not just from the settings or settings page.
+
+If this link is broken or missing, the backend can’t find your spa, which causes “Spa does not exist” errors on all operations that require spa linkage.
+
+Why This Happens
+The setup wizard must set your adminSpaId in the database and your spa must be active and setupComplete=true.
+
+Sometimes the setup wizard appears complete in the UI but does not correctly update the database due to a missed step, backend bug, or synchronization error.
+
+“Business Info” in Settings and visual completion isn’t enough—the linkage must exist at the database level.
+
+How to Fix (Permanent Solution)
+Check if your admin user is actually linked to your created spa:
+
+Your user’s adminSpaId must match your spa’s id in the database.
+
+Your spa must exist, be active, and have setupComplete=true.
+
+If you cannot check the DB directly:
+
+Go to the setup wizard and:
+
+Edit and re-save the “Basic Info” step.
+
+Complete all mandatory steps again (especially the very first step).
+
+Submit the “Complete” action at the final step, which triggers the backend to link the spa and admin in the DB.
+
+Log out and in again to refresh your session after setup.
+
+If the error continues:
+
+Your admin user (users table) is not being linked to a valid spa (adminSpaId is null or incorrect).
+
+You need a developer/DBA to run a query:
+
+text
+SELECT * FROM users WHERE email = 'admin@test.com';
+SELECT * FROM spas WHERE id = <adminSpaId from previous result>;
+If adminSpaId is null or doesn’t match a valid spa, update it manually to the correct spa’s id.
+
+Make sure the spa is active=true and setupComplete=true.
+
+Why This Works
+All category/service/staff creation checks the user-to-spa link (adminSpaId) first. Without this, every API call fails, even if the spa exists in the spas table.
+
+This is a backend logic and data integrity issue—not a UI/settings/front-end bug.
+
+If You Still Get This Error
+There’s a backend bug that’s failing to link your admin account to your spa on setup completion. This needs to be reported to the development team for a permanent backend patch.
+
+Summary Table
+Requirement	Where to check/fix
+User’s adminSpaId	Database: users table
+Spa record id	Database: spas table
+Spa is active and setupComplete	spas table
+UI Setup Wizard triggers link	Complete and re-save wizard steps
