@@ -157,8 +157,8 @@ export default function AdminPromoCodes() {
       return;
     }
 
+    // Note: spaId is automatically injected by the backend from the authenticated admin user
     const data = {
-      spaId: 1, // TODO: Get from auth context
       code: promoCodeForm.code.toUpperCase(),
       discountType: promoCodeForm.discountType,
       discountValue: promoCodeForm.discountValue,

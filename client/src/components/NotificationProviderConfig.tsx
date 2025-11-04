@@ -139,11 +139,11 @@ export default function NotificationProviderConfig() {
     
     // Extract fromEmail or fromPhone from credentials
     const { fromEmail, fromPhone, ...providerCredentials } = credentials;
-    
-    saveMutation.mutate({ 
-      spaId: 1, // TODO: Get from auth context
-      provider: selectedProvider, 
-      channel: selectedChannel, 
+
+    // Note: spaId is automatically injected by the backend from the authenticated admin user
+    saveMutation.mutate({
+      provider: selectedProvider,
+      channel: selectedChannel,
       credentials: providerCredentials,
       fromEmail: fromEmail || undefined,
       fromPhone: fromPhone || undefined,
