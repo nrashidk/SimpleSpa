@@ -477,8 +477,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         spaId: int.spaId,
         integrationType: int.integrationType,
         status: int.status,
-        metadata: int.metadata,
-        lastSyncedAt: int.lastSyncedAt,
+        settings: int.settings,
+        lastSyncAt: int.lastSyncAt,
         createdAt: int.createdAt,
       }));
       
@@ -553,10 +553,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           encryptedTokens,
           tokenMetadata,
           status: 'active',
-          metadata: {
+          settings: {
             connectedAt: new Date().toISOString(),
             connectedBy: userId,
-          },
+          } as any,
         });
       } else {
         integration = await storage.createIntegration({
@@ -565,10 +565,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           encryptedTokens,
           tokenMetadata,
           status: 'active',
-          metadata: {
+          settings: {
             connectedAt: new Date().toISOString(),
             connectedBy: userId,
-          },
+          } as any,
         } as any);
       }
 
@@ -578,7 +578,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         action: 'CREATE',
         entityType: 'spa',
         entityId: spaId,
-        after: { integrationType, connected: true },
+        changes: {
+          after: { integrationType, connected: true },
+        },
       });
 
       // Redirect back to settings with success message
@@ -606,11 +608,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const userId = (req as any).user?.claims?.sub || (req as any).user?.id;
       await storage.updateIntegration(integrationId, {
         status: 'inactive',
-        metadata: {
-          ...integration.metadata,
+        settings: {
+          ...(integration.settings as any),
           disconnectedAt: new Date().toISOString(),
           disconnectedBy: userId,
-        },
+        } as any,
       });
 
       await AuditLogger.log({
@@ -618,7 +620,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         action: 'DELETE',
         entityType: 'spa',
         entityId: integration.spaId,
-        after: { integrationType: integration.integrationType, disconnected: true },
+        changes: {
+          after: { integrationType: integration.integrationType, disconnected: true },
+        },
       });
 
       res.json({ success: true });
@@ -4076,10 +4080,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         action: existing ? 'UPDATE' : 'CREATE',
         entityType: 'notification_provider',
         entityId: savedProvider.id,
-        after: {
-          provider,
-          channel,
-          isActive: true,
+        changes: {
+          after: {
+            provider,
+            channel,
+            isActive: true,
+          },
         },
       });
       
