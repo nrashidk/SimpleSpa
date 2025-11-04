@@ -364,7 +364,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const user = req.user as any;
       const userId = user.claims.sub;
       const userEmail = user.claims.email || `dev-${userId}@test.com`;
-      
+
       // Upsert user with super_admin role
       const superAdminUser = await storage.upsertUser({
         id: userId,
@@ -372,14 +372,77 @@ export async function registerRoutes(app: Express): Promise<Server> {
         role: 'super_admin',
         status: 'approved'
       });
-      
-      res.json({ 
-        success: true, 
+
+      res.json({
+        success: true,
         message: "You are now a super admin! Refresh the page to access the admin panel.",
         user: superAdminUser
       });
     } catch (error) {
       handleRouteError(res, error, "Failed to create super admin");
+    }
+  });
+
+  // Create a super admin with email and password (for direct login without OAuth)
+  app.post('/api/dev/create-super-admin', async (req, res) => {
+    try {
+      const { email, password } = req.body;
+
+      // Validate input
+      if (!email || !password) {
+        return res.status(400).json({ message: "Email and password are required" });
+      }
+
+      // Validate password strength
+      if (password.length < 8) {
+        return res.status(400).json({ message: "Password must be at least 8 characters long" });
+      }
+
+      // Check if user already exists
+      const existingUser = await storage.getUserByEmail(email);
+      if (existingUser) {
+        // If user exists but has no password, we can update it
+        if (!existingUser.password) {
+          const hashedPassword = await bcrypt.hash(password, 10);
+          const updatedUser = await storage.upsertUser({
+            id: existingUser.id,
+            email: email,
+            password: hashedPassword,
+            role: 'super_admin',
+            status: 'approved'
+          });
+
+          return res.json({
+            success: true,
+            message: "Super admin updated with password. You can now login with email and password.",
+            user: { id: updatedUser.id, email: updatedUser.email, role: updatedUser.role }
+          });
+        }
+
+        return res.status(400).json({
+          message: "User with this email already exists. Use a different email or update the existing user's password."
+        });
+      }
+
+      // Hash password
+      const hashedPassword = await bcrypt.hash(password, 10);
+
+      // Create new super admin user
+      const superAdminUser = await storage.upsertUser({
+        email: email,
+        password: hashedPassword,
+        role: 'super_admin',
+        status: 'approved'
+      });
+
+      res.json({
+        success: true,
+        message: "Super admin created successfully! You can now login with email and password.",
+        user: { id: superAdminUser.id, email: superAdminUser.email, role: superAdminUser.role }
+      });
+    } catch (error) {
+      console.error("Create super admin error:", error);
+      res.status(500).json({ message: "Failed to create super admin" });
     }
   });
 
