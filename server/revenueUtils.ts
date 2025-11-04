@@ -49,7 +49,10 @@ export function checkVATThreshold(
   const currentYear = new Date().getFullYear();
   const annualRevenue = calculateAnnualRevenue(invoices, currentYear);
   const thresholdReached = annualRevenue >= thresholdAmount;
-  const percentageOfThreshold = (annualRevenue / thresholdAmount) * 100;
+  // Prevent division by zero - if threshold is 0, percentage is 100 if revenue > 0
+  const percentageOfThreshold = thresholdAmount > 0
+    ? (annualRevenue / thresholdAmount) * 100
+    : (annualRevenue > 0 ? 100 : 0);
   const remainingToThreshold = Math.max(0, thresholdAmount - annualRevenue);
 
   return {

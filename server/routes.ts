@@ -2434,7 +2434,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Staff Schedule routes
   app.get("/api/admin/staff/:staffId/schedules", isAdmin, async (req, res) => {
     try {
-      const staffId = parseInt(req.params.staffId);
+      const staffId = parseNumericId(req.params.staffId);
+      if (staffId === null) {
+        return res.status(400).json({ message: "Invalid staff ID" });
+      }
       const schedules = await storage.getStaffSchedules(staffId);
       res.json(schedules);
     } catch (error) {
@@ -2445,7 +2448,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/admin/staff/:staffId/schedules", isAdmin, injectAdminSpa, ensureSetupComplete, async (req: any, res) => {
     try {
-      const staffId = parseInt(req.params.staffId);
+      const staffId = parseNumericId(req.params.staffId);
+      if (staffId === null) {
+        return res.status(400).json({ message: "Invalid staff ID" });
+      }
       const validatedData = insertStaffScheduleSchema.parse({ ...req.body, staffId });
       const schedule = await storage.createStaffSchedule(validatedData);
       res.json(schedule);
@@ -2457,7 +2463,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.delete("/api/admin/staff/:staffId/schedules/:id", isAdmin, injectAdminSpa, ensureSetupComplete, async (req: any, res) => {
     try {
-      const id = parseInt(req.params.id);
+      const id = parseNumericId(req.params.id);
+      if (id === null) {
+        return res.status(400).json({ message: "Invalid schedule ID" });
+      }
       const deleted = await storage.deleteStaffSchedule(id);
       if (!deleted) {
         return res.status(404).json({ message: "Staff schedule not found" });
@@ -2698,7 +2707,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.put("/api/admin/products/:id", isAdmin, async (req, res) => {
     try {
-      const id = parseInt(req.params.id);
+      const id = parseNumericId(req.params.id);
+      if (id === null) {
+        return res.status(400).json({ message: "Invalid product ID" });
+      }
       const validatedData = insertProductSchema.partial().parse(req.body);
       const product = await storage.updateProduct(id, validatedData);
       if (!product) {
@@ -2713,7 +2725,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.delete("/api/admin/products/:id", isAdmin, async (req, res) => {
     try {
-      const id = parseInt(req.params.id);
+      const id = parseNumericId(req.params.id);
+      if (id === null) {
+        return res.status(400).json({ message: "Invalid product ID" });
+      }
       const deleted = await storage.deleteProduct(id);
       if (!deleted) {
         return res.status(404).json({ message: "Product not found" });
@@ -2923,11 +2938,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.put("/api/admin/bookings/:id", requireStaffRole(staffRoles.MANAGE_BOOKINGS), async (req: any, res) => {
     try {
-      const id = parseInt(req.params.id);
-      
+      const id = parseNumericId(req.params.id);
+      if (id === null) {
+        return res.status(400).json({ message: "Invalid booking ID" });
+      }
+
       // Extract services BEFORE Zod parsing (which strips unknown fields)
       const services = req.body.services;
-      
+
       const validatedData = insertBookingSchema.partial().parse(req.body);
       const booking = await storage.updateBooking(id, validatedData);
       if (!booking) {
@@ -2970,11 +2988,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.delete("/api/admin/bookings/:id", requireStaffRole(staffRoles.MANAGE_BOOKINGS), async (req: any, res) => {
     try {
-      const id = parseInt(req.params.id);
-      
+      const id = parseNumericId(req.params.id);
+      if (id === null) {
+        return res.status(400).json({ message: "Invalid booking ID" });
+      }
+
       // Get booking before deletion to check for calendar event
       const booking = await storage.getBookingById(id);
-      
+
       const deleted = await storage.deleteBooking(id);
       if (!deleted) {
         return res.status(404).json({ message: "Booking not found" });
@@ -3000,7 +3021,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/admin/bookings/:bookingId/items", isAdmin, async (req, res) => {
     try {
-      const bookingId = parseInt(req.params.bookingId);
+      const bookingId = parseNumericId(req.params.bookingId);
+      if (bookingId === null) {
+        return res.status(400).json({ message: "Invalid booking ID" });
+      }
       const items = await storage.getBookingItemsByBookingId(bookingId);
       res.json(items);
     } catch (error) {
