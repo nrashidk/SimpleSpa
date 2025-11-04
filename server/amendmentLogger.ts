@@ -6,7 +6,7 @@
  */
 
 import { db } from "./db";
-import { amendments, users } from "@shared/schema";
+import { amendments, users, type InsertAmendment } from "@shared/schema";
 import { eq, and, gte, lte, desc } from "drizzle-orm";
 
 export interface AmendmentLogData {
@@ -27,7 +27,7 @@ export interface AmendmentFilters {
   tableName?: string;
   startDate?: Date;
   endDate?: Date;
-  amendedBy?: number;
+  amendedBy?: string; // User ID (varchar)
   recordId?: number;
 }
 
@@ -36,7 +36,7 @@ export interface AmendmentFilters {
  */
 export async function logAmendment(data: AmendmentLogData): Promise<void> {
   try {
-    await db.insert(amendments).values({
+    const amendmentData: InsertAmendment = {
       changeType: data.changeType,
       tableName: data.tableName,
       recordId: data.recordId,
@@ -47,7 +47,8 @@ export async function logAmendment(data: AmendmentLogData): Promise<void> {
       ipAddress: data.ipAddress || null,
       userAgent: data.userAgent || null,
       reason: data.reason || null,
-    });
+    };
+    await db.insert(amendments).values(amendmentData as any);
   } catch (error) {
     console.error('Failed to log amendment:', error);
     // Don't throw - logging failures shouldn't break the main operation

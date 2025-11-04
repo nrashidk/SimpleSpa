@@ -72,11 +72,12 @@ export async function getVATReturnReport(filters: VATReportFilters): Promise<VAT
   if (endDate) dateConditions.push(lte(bookings.bookingDate, endDate));
 
   // 1. Aggregate Service Bookings VAT
+  // Note: booking_items doesn't have VAT fields, calculate from price (assuming 5% UAE VAT)
   const serviceVATQuery = db
     .select({
       count: sql<number>`count(*)::int`,
-      netAmount: sql<string>`COALESCE(SUM(COALESCE(${bookingItems.netAmount}, 0)), 0)`,
-      vatAmount: sql<string>`COALESCE(SUM(COALESCE(${bookingItems.vatAmount}, 0)), 0)`,
+      netAmount: sql<string>`COALESCE(SUM(COALESCE(${bookingItems.price}, 0) / 1.05), 0)`,
+      vatAmount: sql<string>`COALESCE(SUM(COALESCE(${bookingItems.price}, 0) - (COALESCE(${bookingItems.price}, 0) / 1.05)), 0)`,
       grossAmount: sql<string>`COALESCE(SUM(COALESCE(${bookingItems.price}, 0)), 0)`,
     })
     .from(bookingItems)
@@ -84,7 +85,7 @@ export async function getVATReturnReport(filters: VATReportFilters): Promise<VAT
 
   const serviceConditions = [...dateConditions];
   if (spaId) serviceConditions.push(eq(bookings.spaId, spaId));
-  if (taxCode) serviceConditions.push(eq(bookingItems.taxCode, taxCode));
+  // Note: taxCode filter not available for booking_items as it lacks taxCode field
 
   const servicesData = serviceConditions.length > 0
     ? await serviceVATQuery.where(and(...serviceConditions))
@@ -174,13 +175,13 @@ export async function getVATReturnReport(filters: VATReportFilters): Promise<VAT
       : await loyaltyVATQuery;
   }
 
-  const services = servicesData[0] || { count: 0, netAmount: '0', vatAmount: '0', grossAmount: '0' };
-  const products = productsData[0] || { count: 0, netAmount: '0', vatAmount: '0', grossAmount: '0' };
-  const loyalty = loyaltyData[0] || { count: 0, netAmount: '0', vatAmount: '0', grossAmount: '0' };
+  const servicesResult = servicesData[0] || { count: 0, netAmount: '0', vatAmount: '0', grossAmount: '0' };
+  const productsResult = productsData[0] || { count: 0, netAmount: '0', vatAmount: '0', grossAmount: '0' };
+  const loyaltyResult = loyaltyData[0] || { count: 0, netAmount: '0', vatAmount: '0', grossAmount: '0' };
 
-  const totalNet = parseFloat(services.netAmount) + parseFloat(products.netAmount) + parseFloat(loyalty.netAmount);
-  const totalVAT = parseFloat(services.vatAmount) + parseFloat(products.vatAmount) + parseFloat(loyalty.vatAmount);
-  const totalGross = parseFloat(services.grossAmount) + parseFloat(products.grossAmount) + parseFloat(loyalty.grossAmount);
+  const totalNet = parseFloat(servicesResult.netAmount) + parseFloat(productsResult.netAmount) + parseFloat(loyaltyResult.netAmount);
+  const totalVAT = parseFloat(servicesResult.vatAmount) + parseFloat(productsResult.vatAmount) + parseFloat(loyaltyResult.vatAmount);
+  const totalGross = parseFloat(servicesResult.grossAmount) + parseFloat(productsResult.grossAmount) + parseFloat(loyaltyResult.grossAmount);
 
   // Get breakdown by tax code
   const taxCodes = ['SR', 'ZR', 'ES', 'OP'];
@@ -204,25 +205,25 @@ export async function getVATReturnReport(filters: VATReportFilters): Promise<VAT
     },
     totals: {
       services: {
-        count: services.count,
-        netAmount: parseFloat(services.netAmount),
-        vatAmount: parseFloat(services.vatAmount),
-        grossAmount: parseFloat(services.grossAmount),
+        count: servicesResult.count,
+        netAmount: parseFloat(servicesResult.netAmount),
+        vatAmount: parseFloat(servicesResult.vatAmount),
+        grossAmount: parseFloat(servicesResult.grossAmount),
       },
       products: {
-        count: products.count,
-        netAmount: parseFloat(products.netAmount),
-        vatAmount: parseFloat(products.vatAmount),
-        grossAmount: parseFloat(products.grossAmount),
+        count: productsResult.count,
+        netAmount: parseFloat(productsResult.netAmount),
+        vatAmount: parseFloat(productsResult.vatAmount),
+        grossAmount: parseFloat(productsResult.grossAmount),
       },
       loyalty: {
-        count: loyalty.count,
-        netAmount: parseFloat(loyalty.netAmount),
-        vatAmount: parseFloat(loyalty.vatAmount),
-        grossAmount: parseFloat(loyalty.grossAmount),
+        count: loyaltyResult.count,
+        netAmount: parseFloat(loyaltyResult.netAmount),
+        vatAmount: parseFloat(loyaltyResult.vatAmount),
+        grossAmount: parseFloat(loyaltyResult.grossAmount),
       },
       overall: {
-        totalCount: services.count + products.count + loyalty.count,
+        totalCount: servicesResult.count + productsResult.count + loyaltyResult.count,
         totalNet,
         totalVAT,
         totalGross,

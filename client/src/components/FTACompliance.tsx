@@ -12,24 +12,53 @@ import { format } from "date-fns";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
+// Type definitions for API responses
+interface VATReport {
+  period: { from: string; to: string };
+  totals: {
+    services: { count: number; netAmount: number; vatAmount: number; grossAmount: number };
+    products: { count: number; netAmount: number; vatAmount: number; grossAmount: number };
+    loyalty: { count: number; netAmount: number; vatAmount: number; grossAmount: number };
+    overall: { totalCount: number; totalNet: number; totalVAT: number; totalGross: number };
+  };
+  byTaxCode: Array<{ taxCode: string; count: number; netAmount: number; vatAmount: number; grossAmount: number }>;
+}
+
+interface Amendment {
+  id: number;
+  changeType: string;
+  tableName: string;
+  recordId: number;
+  amendedBy: string | null;
+  amendedByName: string;
+  amendDate: string;
+}
+
+interface BackupLog {
+  id: number;
+  backupType: string;
+  status: string;
+  backupTime: string;
+}
+
 export function FTACompliance() {
   const { toast } = useToast();
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
 
   // Fetch VAT Return Report
-  const { data: vatReport, isLoading: vatLoading, refetch: refetchVAT } = useQuery({
+  const { data: vatReport, isLoading: vatLoading, refetch: refetchVAT } = useQuery<VATReport>({
     queryKey: ['/api/admin/vat-report', dateFrom, dateTo],
     enabled: false, // Only fetch when user clicks "Generate Report"
   });
 
   // Fetch Amendment Logs
-  const { data: amendments = [], isLoading: amendmentsLoading } = useQuery({
+  const { data: amendments = [], isLoading: amendmentsLoading } = useQuery<Amendment[]>({
     queryKey: ['/api/admin/amendments'],
   });
 
   // Fetch Backup Logs
-  const { data: backupLogs = [], isLoading: backupsLoading } = useQuery({
+  const { data: backupLogs = [], isLoading: backupsLoading } = useQuery<BackupLog[]>({
     queryKey: ['/api/admin/backup-logs'],
   });
 

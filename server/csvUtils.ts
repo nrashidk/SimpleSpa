@@ -22,7 +22,7 @@ export function parseCustomersCSV(csvContent: string): CustomerCSVRow[] {
     trim: true,
     relaxColumnCount: true,
     bom: true,
-  });
+  }) as CustomerCSVRow[];
   return records;
 }
 
@@ -32,7 +32,8 @@ export function customersToCSV(customers: Customer[]): string {
     email: customer.email || '',
     phone: customer.phone || '',
     gender: customer.gender || '',
-    birthday: customer.birthday ? new Date(customer.birthday).toISOString().split('T')[0] : '',
+    // Note: birthday field removed from schema, keeping CSV field for backwards compatibility
+    birthday: '',
     address_street: (customer.address as any)?.street || '',
     address_city: (customer.address as any)?.city || '',
     address_area: (customer.address as any)?.area || '',
