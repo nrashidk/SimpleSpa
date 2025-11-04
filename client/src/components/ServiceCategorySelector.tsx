@@ -2,16 +2,8 @@ import { useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Check, ChevronLeft, ChevronRight, Sparkles, ChevronDown } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Sparkles } from "lucide-react";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
-import type { ServiceVariant } from "@shared/schema";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 
 export interface Service {
   id: string;
@@ -32,9 +24,6 @@ interface ServiceCategorySelectorProps {
   selectedServiceIds: string[];
   onServiceToggle: (serviceId: string) => void;
   services: Service[];
-  serviceVariants?: ServiceVariant[];
-  selectedVariants?: Record<string, number | null>;
-  onVariantSelect?: (serviceId: string, variantId: number | null) => void;
   onContinue: () => void;
 }
 
@@ -42,9 +31,6 @@ export default function ServiceCategorySelector({
   selectedServiceIds,
   onServiceToggle,
   services,
-  serviceVariants = [],
-  selectedVariants = {},
-  onVariantSelect,
   onContinue,
 }: ServiceCategorySelectorProps) {
   const categories = ["Featured", ...Array.from(new Set(services.map(s => s.category)))];
@@ -86,9 +72,6 @@ export default function ServiceCategorySelector({
       <div className="space-y-3">
         {filteredServices.map((service) => {
           const isSelected = selectedServiceIds.includes(service.id);
-          const serviceNumericId = parseInt(service.id);
-          const availableVariants = serviceVariants.filter(v => v.serviceId === serviceNumericId && v.active);
-          const hasVariants = availableVariants.length > 0;
 
           return (
             <div key={service.id}>
@@ -107,11 +90,6 @@ export default function ServiceCategorySelector({
                       {service.discount && (
                         <Badge variant="secondary" className="text-xs text-green-600 dark:text-green-400">
                           Save up to {service.discount}%
-                        </Badge>
-                      )}
-                      {hasVariants && (
-                        <Badge variant="outline" className="text-xs">
-                          {availableVariants.length} option{availableVariants.length > 1 ? 's' : ''}
                         </Badge>
                       )}
                     </div>
@@ -135,36 +113,6 @@ export default function ServiceCategorySelector({
                   </div>
                 </div>
               </Card>
-
-              {/* Variant Selector - shown when service is selected and has variants */}
-              {isSelected && hasVariants && onVariantSelect && (
-                <Card className="mt-2 p-3 border-primary/20">
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Choose Option:</label>
-                    <Select
-                      value={selectedVariants[service.id]?.toString() || "base"}
-                      onValueChange={(value) => {
-                        const variantId = value === "base" ? null : parseInt(value);
-                        onVariantSelect(service.id, variantId);
-                      }}
-                    >
-                      <SelectTrigger data-testid={`select-variant-${service.id}`}>
-                        <SelectValue placeholder="Select option" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="base">
-                          Base Service - {service.duration} min - AED {service.price}
-                        </SelectItem>
-                        {availableVariants.map((variant) => (
-                          <SelectItem key={variant.id} value={variant.id.toString()}>
-                            {variant.name} - {variant.duration} min - AED {variant.price}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </Card>
-              )}
 
               {service.package && (
                 <Card className="mt-2 p-3 bg-primary/10 border-primary/20">
