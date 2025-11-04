@@ -37,6 +37,7 @@ function Router() {
       <Route path="/" component={Home} />
       <Route path="/login/customer" component={CustomerLogin} />
       <Route path="/login/admin" component={AdminLogin} />
+      <Route path="/admin/login" component={AdminLogin} />
       <Route path="/booking" component={BookingSearch} />
       <Route path="/booking/flow" component={BookingFlow} />
       <Route path="/my-account" component={MyAccount} />
