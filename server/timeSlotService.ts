@@ -1,6 +1,4 @@
 import { storage } from "./storage";
-import { googleCalendarService } from "./googleCalendarService";
-import { getValidAccessToken } from "./oauthService";
 
 interface TimeSlot {
   time: string; // HH:MM format
@@ -12,89 +10,6 @@ interface BusinessHours {
   [key: string]: { open: string; close: string } | null;
 }
 
-// Helper: Get DST-aware timezone offset for RFC3339 format
-function getTimezoneOffset(date: Date, timeZone: string): string {
-  try {
-    // Format the date in both UTC and the target timezone
-    const utcDate = new Date(date.toLocaleString('en-US', { timeZone: 'UTC' }));
-    const tzDate = new Date(date.toLocaleString('en-US', { timeZone }));
-    
-    // Calculate offset in minutes
-    const offsetMinutes = (tzDate.getTime() - utcDate.getTime()) / (1000 * 60);
-    
-    // Convert to RFC3339 format (+HH:MM or -HH:MM)
-    const sign = offsetMinutes >= 0 ? '+' : '-';
-    const absOffset = Math.abs(offsetMinutes);
-    const hours = Math.floor(absOffset / 60);
-    const minutes = absOffset % 60;
-    
-    return `${sign}${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
-  } catch (error) {
-    console.error('Error calculating timezone offset:', error);
-    return '+04:00'; // Fallback to Dubai
-  }
-}
-
-// Helper: Fetch Google Calendar events for conflict checking
-async function getCalendarConflicts(
-  spaId: number,
-  staffEmail: string | undefined,
-  date: string
-): Promise<Array<{ start: string; end: string }>> {
-  try {
-    // Check if Google Calendar is connected
-    const integrations = await storage.getSpaIntegrations(spaId);
-    const calendarIntegration = integrations.find(
-      i => i.integrationType === 'google_calendar' && i.status === 'active'
-    );
-
-    if (!calendarIntegration || !staffEmail) {
-      return [];
-    }
-
-    // Get valid access token
-    const accessToken = await getValidAccessToken(
-      calendarIntegration.provider as 'google',
-      calendarIntegration.integrationType,
-      calendarIntegration.encryptedTokens
-    );
-
-    // Get spa details for timezone
-    const spa = await storage.getSpaById(spaId);
-    const spaTimeZone = (spa?.timeZone as string) || 'Asia/Dubai';
-    
-    // Calculate DST-aware offsets for start and end of day separately
-    // (handles DST transition days where offset changes during the day)
-    const startDate = new Date(`${date}T00:00:00`);
-    const endDate = new Date(`${date}T23:59:59`);
-    const startOffset = getTimezoneOffset(startDate, spaTimeZone);
-    const endOffset = getTimezoneOffset(endDate, spaTimeZone);
-
-    // Get staff-specific calendar from integration metadata, fallback to 'primary'
-    const integrationMetadata = calendarIntegration.metadata as any;
-    const calendarId = integrationMetadata?.staffCalendars?.[staffEmail] || 'primary';
-
-    // Fetch events for the day using RFC3339 format with DST-aware timezone offsets
-    const startOfDay = `${date}T00:00:00${startOffset}`;
-    const endOfDay = `${date}T23:59:59${endOffset}`;
-
-    const events = await googleCalendarService.listEvents(
-      accessToken,
-      calendarId,
-      startOfDay,
-      endOfDay
-    );
-
-    // Return conflicts as time ranges
-    return events.map(event => ({
-      start: event.start?.dateTime || '',
-      end: event.end?.dateTime || '',
-    })).filter(e => e.start && e.end);
-  } catch (error) {
-    console.error('Failed to fetch calendar conflicts:', error);
-    return [];
-  }
-}
 
 /**
  * Generate available time slots for a spa on a given date
@@ -184,15 +99,6 @@ export async function generateAvailableTimeSlots(
     spaStaff = await storage.getStaffBySpaId(spaId);
   }
 
-  // Fetch Google Calendar conflicts for staff
-  let calendarConflicts: Array<{ start: string; end: string }> = [];
-  if (staffId) {
-    const staff = await storage.getStaffById(staffId);
-    if (staff?.email) {
-      calendarConflicts = await getCalendarConflicts(spaId, staff.email, date);
-    }
-  }
-
   // Generate all possible time slots
   const slots: TimeSlot[] = [];
   const [startHour, startMin] = workStartTime.split(':').map(Number);
@@ -234,20 +140,7 @@ export async function generateAvailableTimeSlots(
         return slotStart < bookingEnd && bookingStart < slotEnd;
       });
 
-      // Check Google Calendar conflicts
-      const hasCalendarConflict = calendarConflicts.some(event => {
-        const eventStart = new Date(event.start);
-        const eventEnd = new Date(event.end);
-        const eventStartMinutes = eventStart.getHours() * 60 + eventStart.getMinutes();
-        const eventEndMinutes = eventEnd.getHours() * 60 + eventEnd.getMinutes();
-        
-        const slotStart = minutes;
-        const slotEnd = minutes + serviceDuration;
-        
-        return slotStart < eventEndMinutes && eventStartMinutes < slotEnd;
-      });
-
-      available = !hasBookingConflict && !hasCalendarConflict;
+      available = !hasBookingConflict;
     } else {
       // "Any staff" mode - find if at least one staff member is available
       const availableStaff = spaStaff.find((staff: any) => {

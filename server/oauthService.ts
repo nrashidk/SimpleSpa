@@ -27,10 +27,6 @@ export function getGoogleOAuthConfig(integrationType: string): OAuthConfig {
 
   // Add specific scopes based on integration type
   const integrationScopes: Record<string, string[]> = {
-    google_calendar: [
-      'https://www.googleapis.com/auth/calendar',
-      'https://www.googleapis.com/auth/calendar.events',
-    ],
     google_my_business: [
       'https://www.googleapis.com/auth/business.manage',
     ],

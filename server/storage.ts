@@ -11,7 +11,6 @@ import {
   membershipUsage,
   staff,
   staffSchedules,
-  staffEmergencyContacts,
   products,
   customers,
   walletTransactions,
@@ -37,13 +36,6 @@ import {
   spaIntegrations,
   integrationSyncLogs,
   backupLogs,
-  serviceVariants,
-  serviceVariantStaffPricing,
-  serviceAddons,
-  serviceAddonOptions,
-  serviceBundles,
-  serviceBundleItems,
-  serviceExtraTime,
   type User,
   type UpsertUser,
   type AdminApplication,
@@ -68,8 +60,6 @@ import {
   type InsertStaff,
   type StaffSchedule,
   type InsertStaffSchedule,
-  type StaffEmergencyContact,
-  type InsertStaffEmergencyContact,
   type StaffTimeEntry,
   type InsertStaffTimeEntry,
   type Product,
@@ -111,20 +101,6 @@ import {
   type InsertIntegrationSyncLog,
   type BackupLog,
   type InsertBackupLog,
-  type ServiceVariant,
-  type InsertServiceVariant,
-  type ServiceVariantStaffPricing,
-  type InsertServiceVariantStaffPricing,
-  type ServiceAddon,
-  type InsertServiceAddon,
-  type ServiceAddonOption,
-  type InsertServiceAddonOption,
-  type ServiceBundle,
-  type InsertServiceBundle,
-  type ServiceBundleItem,
-  type InsertServiceBundleItem,
-  type ServiceExtraTime,
-  type InsertServiceExtraTime,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, gte, lte, sql } from "drizzle-orm";
@@ -401,62 +377,6 @@ export interface IStorage {
   // Backup Log operations (FTA compliance)
   getBackupLogs(): Promise<BackupLog[]>;
   createBackupLog(log: InsertBackupLog): Promise<BackupLog>;
-
-  // ============================================
-  // MARKETPLACE FEATURES (Phase 1) - Storage Methods
-  // ============================================
-
-  // Service Variant operations
-  getServiceVariants(serviceId: number): Promise<ServiceVariant[]>;
-  getServiceVariantById(id: number): Promise<ServiceVariant | undefined>;
-  createServiceVariant(variant: InsertServiceVariant): Promise<ServiceVariant>;
-  updateServiceVariant(id: number, variant: Partial<InsertServiceVariant>): Promise<ServiceVariant | undefined>;
-  deleteServiceVariant(id: number): Promise<boolean>;
-
-  // Service Variant Staff Pricing operations
-  getVariantStaffPricing(variantId: number): Promise<ServiceVariantStaffPricing[]>;
-  getVariantStaffPricingByStaff(variantId: number, staffId: number): Promise<ServiceVariantStaffPricing | undefined>;
-  createVariantStaffPricing(pricing: InsertServiceVariantStaffPricing): Promise<ServiceVariantStaffPricing>;
-  updateVariantStaffPricing(id: number, pricing: Partial<InsertServiceVariantStaffPricing>): Promise<ServiceVariantStaffPricing | undefined>;
-  deleteVariantStaffPricing(id: number): Promise<boolean>;
-  deleteAllVariantStaffPricing(variantId: number): Promise<boolean>;
-
-  // Service Add-on operations
-  getServiceAddons(serviceId: number): Promise<ServiceAddon[]>;
-  getServiceAddonById(id: number): Promise<ServiceAddon | undefined>;
-  createServiceAddon(addon: InsertServiceAddon): Promise<ServiceAddon>;
-  updateServiceAddon(id: number, addon: Partial<InsertServiceAddon>): Promise<ServiceAddon | undefined>;
-  deleteServiceAddon(id: number): Promise<boolean>;
-
-  // Service Add-on Option operations
-  getAddonOptions(addonId: number): Promise<ServiceAddonOption[]>;
-  getAddonOptionById(id: number): Promise<ServiceAddonOption | undefined>;
-  createAddonOption(option: InsertServiceAddonOption): Promise<ServiceAddonOption>;
-  updateAddonOption(id: number, option: Partial<InsertServiceAddonOption>): Promise<ServiceAddonOption | undefined>;
-  deleteAddonOption(id: number): Promise<boolean>;
-  deleteAllAddonOptions(addonId: number): Promise<boolean>;
-
-  // Service Bundle operations
-  getServiceBundles(spaId: number): Promise<ServiceBundle[]>;
-  getServiceBundleById(id: number): Promise<ServiceBundle | undefined>;
-  createServiceBundle(bundle: InsertServiceBundle): Promise<ServiceBundle>;
-  updateServiceBundle(id: number, bundle: Partial<InsertServiceBundle>): Promise<ServiceBundle | undefined>;
-  deleteServiceBundle(id: number): Promise<boolean>;
-
-  // Service Bundle Item operations
-  getBundleItems(bundleId: number): Promise<ServiceBundleItem[]>;
-  getBundleItemById(id: number): Promise<ServiceBundleItem | undefined>;
-  createBundleItem(item: InsertServiceBundleItem): Promise<ServiceBundleItem>;
-  updateBundleItem(id: number, item: Partial<InsertServiceBundleItem>): Promise<ServiceBundleItem | undefined>;
-  deleteBundleItem(id: number): Promise<boolean>;
-  deleteAllBundleItems(bundleId: number): Promise<boolean>;
-
-  // Service Extra Time operations
-  getServiceExtraTimes(serviceId: number): Promise<ServiceExtraTime[]>;
-  getServiceExtraTimeById(id: number): Promise<ServiceExtraTime | undefined>;
-  createServiceExtraTime(extraTime: InsertServiceExtraTime): Promise<ServiceExtraTime>;
-  updateServiceExtraTime(id: number, extraTime: Partial<InsertServiceExtraTime>): Promise<ServiceExtraTime | undefined>;
-  deleteServiceExtraTime(id: number): Promise<boolean>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1037,30 +957,6 @@ export class DatabaseStorage implements IStorage {
     return result.rowCount ? result.rowCount > 0 : false;
   }
 
-  // Staff Emergency Contact operations
-  async getStaffEmergencyContacts(staffId: number): Promise<StaffEmergencyContact[]> {
-    return db.select().from(staffEmergencyContacts).where(eq(staffEmergencyContacts.staffId, staffId));
-  }
-
-  async createStaffEmergencyContact(contact: InsertStaffEmergencyContact): Promise<StaffEmergencyContact> {
-    const [newContact] = await db.insert(staffEmergencyContacts).values(contact).returning();
-    return newContact;
-  }
-
-  async updateStaffEmergencyContact(id: number, contact: Partial<InsertStaffEmergencyContact>): Promise<StaffEmergencyContact | undefined> {
-    const [updated] = await db
-      .update(staffEmergencyContacts)
-      .set({ ...contact, updatedAt: new Date() })
-      .where(eq(staffEmergencyContacts.id, id))
-      .returning();
-    return updated;
-  }
-
-  async deleteStaffEmergencyContact(id: number): Promise<boolean> {
-    const result = await db.delete(staffEmergencyContacts).where(eq(staffEmergencyContacts.id, id));
-    return result.rowCount ? result.rowCount > 0 : false;
-  }
-
   // Staff Time Entry operations (Enhanced Timesheets)
   async getAllTimesheets(filters?: { spaId?: number; staffId?: number; status?: string; startDate?: Date; endDate?: Date }): Promise<StaffTimeEntry[]> {
     const conditions = [];
@@ -1384,7 +1280,6 @@ export class DatabaseStorage implements IStorage {
           email: primary.email || duplicate.email,
           phone: primary.phone || duplicate.phone,
           gender: primary.gender || duplicate.gender,
-          birthday: primary.birthday || duplicate.birthday,
           address: primary.address || duplicate.address,
           updatedAt: new Date(),
         })
@@ -2413,322 +2308,6 @@ export class DatabaseStorage implements IStorage {
       .values(log)
       .returning();
     return backupLog;
-  }
-
-  // ============================================
-  // MARKETPLACE FEATURES (Phase 1) - Implementation
-  // ============================================
-
-  // Service Variant operations
-  async getServiceVariants(serviceId: number): Promise<ServiceVariant[]> {
-    return await db
-      .select()
-      .from(serviceVariants)
-      .where(eq(serviceVariants.serviceId, serviceId))
-      .orderBy(serviceVariants.displayOrder, serviceVariants.name);
-  }
-
-  async getServiceVariantById(id: number): Promise<ServiceVariant | undefined> {
-    const [variant] = await db
-      .select()
-      .from(serviceVariants)
-      .where(eq(serviceVariants.id, id));
-    return variant;
-  }
-
-  async createServiceVariant(variant: InsertServiceVariant): Promise<ServiceVariant> {
-    const [newVariant] = await db
-      .insert(serviceVariants)
-      .values(variant)
-      .returning();
-    return newVariant;
-  }
-
-  async updateServiceVariant(id: number, variant: Partial<InsertServiceVariant>): Promise<ServiceVariant | undefined> {
-    const [updated] = await db
-      .update(serviceVariants)
-      .set({ ...variant, updatedAt: new Date() })
-      .where(eq(serviceVariants.id, id))
-      .returning();
-    return updated;
-  }
-
-  async deleteServiceVariant(id: number): Promise<boolean> {
-    const result = await db
-      .delete(serviceVariants)
-      .where(eq(serviceVariants.id, id));
-    return result.rowCount > 0;
-  }
-
-  // Service Variant Staff Pricing operations
-  async getVariantStaffPricing(variantId: number): Promise<ServiceVariantStaffPricing[]> {
-    return await db
-      .select()
-      .from(serviceVariantStaffPricing)
-      .where(eq(serviceVariantStaffPricing.variantId, variantId));
-  }
-
-  async getVariantStaffPricingByStaff(variantId: number, staffId: number): Promise<ServiceVariantStaffPricing | undefined> {
-    const [pricing] = await db
-      .select()
-      .from(serviceVariantStaffPricing)
-      .where(
-        and(
-          eq(serviceVariantStaffPricing.variantId, variantId),
-          eq(serviceVariantStaffPricing.staffId, staffId)
-        )
-      );
-    return pricing;
-  }
-
-  async createVariantStaffPricing(pricing: InsertServiceVariantStaffPricing): Promise<ServiceVariantStaffPricing> {
-    const [newPricing] = await db
-      .insert(serviceVariantStaffPricing)
-      .values(pricing)
-      .returning();
-    return newPricing;
-  }
-
-  async updateVariantStaffPricing(id: number, pricing: Partial<InsertServiceVariantStaffPricing>): Promise<ServiceVariantStaffPricing | undefined> {
-    const [updated] = await db
-      .update(serviceVariantStaffPricing)
-      .set(pricing)
-      .where(eq(serviceVariantStaffPricing.id, id))
-      .returning();
-    return updated;
-  }
-
-  async deleteVariantStaffPricing(id: number): Promise<boolean> {
-    const result = await db
-      .delete(serviceVariantStaffPricing)
-      .where(eq(serviceVariantStaffPricing.id, id));
-    return result.rowCount > 0;
-  }
-
-  async deleteAllVariantStaffPricing(variantId: number): Promise<boolean> {
-    const result = await db
-      .delete(serviceVariantStaffPricing)
-      .where(eq(serviceVariantStaffPricing.variantId, variantId));
-    return true; // Always return true as cascade delete may return 0 if no items
-  }
-
-  // Service Add-on operations
-  async getServiceAddons(serviceId: number): Promise<ServiceAddon[]> {
-    return await db
-      .select()
-      .from(serviceAddons)
-      .where(eq(serviceAddons.serviceId, serviceId))
-      .orderBy(serviceAddons.displayOrder, serviceAddons.groupName);
-  }
-
-  async getServiceAddonById(id: number): Promise<ServiceAddon | undefined> {
-    const [addon] = await db
-      .select()
-      .from(serviceAddons)
-      .where(eq(serviceAddons.id, id));
-    return addon;
-  }
-
-  async createServiceAddon(addon: InsertServiceAddon): Promise<ServiceAddon> {
-    const [newAddon] = await db
-      .insert(serviceAddons)
-      .values(addon)
-      .returning();
-    return newAddon;
-  }
-
-  async updateServiceAddon(id: number, addon: Partial<InsertServiceAddon>): Promise<ServiceAddon | undefined> {
-    const [updated] = await db
-      .update(serviceAddons)
-      .set({ ...addon, updatedAt: new Date() })
-      .where(eq(serviceAddons.id, id))
-      .returning();
-    return updated;
-  }
-
-  async deleteServiceAddon(id: number): Promise<boolean> {
-    const result = await db
-      .delete(serviceAddons)
-      .where(eq(serviceAddons.id, id));
-    return result.rowCount > 0;
-  }
-
-  // Service Add-on Option operations
-  async getAddonOptions(addonId: number): Promise<ServiceAddonOption[]> {
-    return await db
-      .select()
-      .from(serviceAddonOptions)
-      .where(eq(serviceAddonOptions.addonId, addonId))
-      .orderBy(serviceAddonOptions.displayOrder, serviceAddonOptions.name);
-  }
-
-  async getAddonOptionById(id: number): Promise<ServiceAddonOption | undefined> {
-    const [option] = await db
-      .select()
-      .from(serviceAddonOptions)
-      .where(eq(serviceAddonOptions.id, id));
-    return option;
-  }
-
-  async createAddonOption(option: InsertServiceAddonOption): Promise<ServiceAddonOption> {
-    const [newOption] = await db
-      .insert(serviceAddonOptions)
-      .values(option)
-      .returning();
-    return newOption;
-  }
-
-  async updateAddonOption(id: number, option: Partial<InsertServiceAddonOption>): Promise<ServiceAddonOption | undefined> {
-    const [updated] = await db
-      .update(serviceAddonOptions)
-      .set({ ...option, updatedAt: new Date() })
-      .where(eq(serviceAddonOptions.id, id))
-      .returning();
-    return updated;
-  }
-
-  async deleteAddonOption(id: number): Promise<boolean> {
-    const result = await db
-      .delete(serviceAddonOptions)
-      .where(eq(serviceAddonOptions.id, id));
-    return result.rowCount > 0;
-  }
-
-  async deleteAllAddonOptions(addonId: number): Promise<boolean> {
-    const result = await db
-      .delete(serviceAddonOptions)
-      .where(eq(serviceAddonOptions.addonId, addonId));
-    return true; // Always return true as cascade delete may return 0 if no items
-  }
-
-  // Service Bundle operations
-  async getServiceBundles(spaId: number): Promise<ServiceBundle[]> {
-    return await db
-      .select()
-      .from(serviceBundles)
-      .where(eq(serviceBundles.spaId, spaId))
-      .orderBy(desc(serviceBundles.featured), serviceBundles.name);
-  }
-
-  async getServiceBundleById(id: number): Promise<ServiceBundle | undefined> {
-    const [bundle] = await db
-      .select()
-      .from(serviceBundles)
-      .where(eq(serviceBundles.id, id));
-    return bundle;
-  }
-
-  async createServiceBundle(bundle: InsertServiceBundle): Promise<ServiceBundle> {
-    const [newBundle] = await db
-      .insert(serviceBundles)
-      .values(bundle)
-      .returning();
-    return newBundle;
-  }
-
-  async updateServiceBundle(id: number, bundle: Partial<InsertServiceBundle>): Promise<ServiceBundle | undefined> {
-    const [updated] = await db
-      .update(serviceBundles)
-      .set({ ...bundle, updatedAt: new Date() })
-      .where(eq(serviceBundles.id, id))
-      .returning();
-    return updated;
-  }
-
-  async deleteServiceBundle(id: number): Promise<boolean> {
-    const result = await db
-      .delete(serviceBundles)
-      .where(eq(serviceBundles.id, id));
-    return result.rowCount > 0;
-  }
-
-  // Service Bundle Item operations
-  async getBundleItems(bundleId: number): Promise<ServiceBundleItem[]> {
-    return await db
-      .select()
-      .from(serviceBundleItems)
-      .where(eq(serviceBundleItems.bundleId, bundleId))
-      .orderBy(serviceBundleItems.displayOrder);
-  }
-
-  async getBundleItemById(id: number): Promise<ServiceBundleItem | undefined> {
-    const [item] = await db
-      .select()
-      .from(serviceBundleItems)
-      .where(eq(serviceBundleItems.id, id));
-    return item;
-  }
-
-  async createBundleItem(item: InsertServiceBundleItem): Promise<ServiceBundleItem> {
-    const [newItem] = await db
-      .insert(serviceBundleItems)
-      .values(item)
-      .returning();
-    return newItem;
-  }
-
-  async updateBundleItem(id: number, item: Partial<InsertServiceBundleItem>): Promise<ServiceBundleItem | undefined> {
-    const [updated] = await db
-      .update(serviceBundleItems)
-      .set(item)
-      .where(eq(serviceBundleItems.id, id))
-      .returning();
-    return updated;
-  }
-
-  async deleteBundleItem(id: number): Promise<boolean> {
-    const result = await db
-      .delete(serviceBundleItems)
-      .where(eq(serviceBundleItems.id, id));
-    return result.rowCount > 0;
-  }
-
-  async deleteAllBundleItems(bundleId: number): Promise<boolean> {
-    const result = await db
-      .delete(serviceBundleItems)
-      .where(eq(serviceBundleItems.bundleId, bundleId));
-    return true; // Always return true as cascade delete may return 0 if no items
-  }
-
-  // Service Extra Time operations
-  async getServiceExtraTimes(serviceId: number): Promise<ServiceExtraTime[]> {
-    return await db
-      .select()
-      .from(serviceExtraTime)
-      .where(eq(serviceExtraTime.serviceId, serviceId))
-      .orderBy(serviceExtraTime.displayOrder, serviceExtraTime.timeType);
-  }
-
-  async getServiceExtraTimeById(id: number): Promise<ServiceExtraTime | undefined> {
-    const [extraTime] = await db
-      .select()
-      .from(serviceExtraTime)
-      .where(eq(serviceExtraTime.id, id));
-    return extraTime;
-  }
-
-  async createServiceExtraTime(extraTime: InsertServiceExtraTime): Promise<ServiceExtraTime> {
-    const [newExtraTime] = await db
-      .insert(serviceExtraTime)
-      .values(extraTime)
-      .returning();
-    return newExtraTime;
-  }
-
-  async updateServiceExtraTime(id: number, extraTime: Partial<InsertServiceExtraTime>): Promise<ServiceExtraTime | undefined> {
-    const [updated] = await db
-      .update(serviceExtraTime)
-      .set({ ...extraTime, updatedAt: new Date() })
-      .where(eq(serviceExtraTime.id, id))
-      .returning();
-    return updated;
-  }
-
-  async deleteServiceExtraTime(id: number): Promise<boolean> {
-    const result = await db
-      .delete(serviceExtraTime)
-      .where(eq(serviceExtraTime.id, id));
-    return result.rowCount > 0;
   }
 }
 

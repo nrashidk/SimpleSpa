@@ -41,17 +41,7 @@ The backend utilizes a PostgreSQL database and an Express-based REST API.
     - **Client Merge:** Safely merge duplicate customer profiles while preserving all booking history, loyalty data, wallet balances, and transaction records. Respects unique email/phone constraints.
     - **CSV Import/Export:** Bulk operations using standards-compliant CSV parsing (csv-parse/csv-stringify) that handles quoted fields, escaped delimiters, UTF-8, and embedded newlines. Import includes duplicate detection and error reporting.
 -   **Team Management System:**
-    - **Enhanced Staff Profiles:** Birthday field for staff members to enable birthday notifications and celebrations.
-    - **Emergency Contacts:** Complete CRUD system for staff emergency contacts with relationship tracking (emergency, spouse, parent, sibling, friend, other), multiple phone numbers, email, and primary contact designation.
     - **Advanced Timesheet System:** Enhanced time tracking with breaks, overtime calculation (>8 hours = overtime), GPS location verification for clock in/out, approval workflow (pending/approved/rejected/disputed states), manual entry support, and comprehensive audit trail. Includes staff-facing clock in/out endpoints and admin approval/rejection workflows.
--   **Marketplace Enhancement Phase 1 (Core Booking): ✅ COMPLETE**
-    - **Service Variants:** Size/duration options for services (e.g., 30min/60min/90min facials, Small/Medium/Large massages) with per-variant pricing and per-staff pricing overrides. **COMPLETE** - Variant selection UI, state management, variant-aware pricing calculations (including in bundles), booking payload integration, and backend persistence all functional.
-    - **Service Add-ons:** Optional extras that can be added to any service booking (e.g., aromatherapy, hot stones, scalp massage). Supports single-select and multi-select option groups with individual pricing. **COMPLETE** - ServiceAddonSelector component with radio/checkbox modes, price and extra time calculations, service-specific addon correlation, booking payload integration, and backend persistence all functional.
-    - **Service Bundles:** Pre-packaged combinations of multiple services at discounted bundle pricing (e.g., "Relaxation Package" = massage + facial + manicure). Tracks individual service selections and bundle-level discount. **COMPLETE** - ServiceBundleSelector component, variant-aware bundle pricing, auto-population of services, booking payload integration, and backend persistence all functional.
-    - **Extra Time Configuration:** Define additional time before/after services for processing, blocked time, and servicing (e.g., 15min room prep, 10min cleanup). Improves calendar accuracy and prevents overbooking. **COMPLETE** - Admin UI in Settings page with table view and dialog forms for CRUD operations.
-    - **Database Schema:** Extended `bookings` table with `bundleId` (FK to service_bundles), extended `booking_items` table with `variantId` (FK to service_variants) and `addonIds` (JSONB array). All schema changes pushed and verified.
-    - **Booking Persistence:** POST /api/bookings endpoint enhanced to handle marketplace data - correctly persists bundleId in bookings, variantId and service-specific addonIds in booking_items. Architect-verified for data integrity and production readiness.
-    - **Backend Complete:** 7 database tables, 38 storage methods, 35+ API endpoints with authentication/authorization/audit logging. **Customer-facing endpoints:** GET /api/spas/:id/service-variants, /service-addons, /service-bundles for public booking flow data.
 
 ## External Dependencies
 -   **Replit Auth:** User authentication and authorization.
@@ -65,4 +55,3 @@ The backend utilizes a PostgreSQL database and an Express-based REST API.
 -   **React Hook Form & Zod:** Form validation.
 -   **Twilio:** Optional notification provider.
 -   **MSG91:** Optional notification provider.
--   **Google Calendar:** Two-way appointment synchronization with timezone preservation and per-staff calendar support.

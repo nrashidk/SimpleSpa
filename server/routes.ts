@@ -19,159 +19,12 @@ import {
   encryptTokensForStorage,
   getValidAccessToken 
 } from "./oauthService";
-import { googleCalendarService } from "./googleCalendarService";
 import { exportToCSV, exportToExcel, exportToPDF, formatCurrency, formatPercentage, formatDate } from "./exportUtils";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
 import bcrypt from "bcryptjs";
 
-// Helper: Get DST-aware timezone offset for RFC3339 format
-function getTimezoneOffset(date: Date, timeZone: string): string {
-  try {
-    // Format the date in both UTC and the target timezone
-    const utcDate = new Date(date.toLocaleString('en-US', { timeZone: 'UTC' }));
-    const tzDate = new Date(date.toLocaleString('en-US', { timeZone }));
-    
-    // Calculate offset in minutes
-    const offsetMinutes = (tzDate.getTime() - utcDate.getTime()) / (1000 * 60);
-    
-    // Convert to RFC3339 format (+HH:MM or -HH:MM)
-    const sign = offsetMinutes >= 0 ? '+' : '-';
-    const absOffset = Math.abs(offsetMinutes);
-    const hours = Math.floor(absOffset / 60);
-    const minutes = absOffset % 60;
-    
-    return `${sign}${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
-  } catch (error) {
-    console.error('Error calculating timezone offset:', error);
-    return '+04:00'; // Fallback to Dubai
-  }
-}
-
-// Helper: Format date in timezone without UTC conversion
-function formatDateInTimezone(date: Date, timeZone: string): { date: string; time: string } {
-  // Use Intl.DateTimeFormat to get components in the target timezone
-  const formatter = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  });
-  
-  const parts = formatter.formatToParts(date);
-  const year = parts.find(p => p.type === 'year')?.value || '';
-  const month = parts.find(p => p.type === 'month')?.value || '';
-  const day = parts.find(p => p.type === 'day')?.value || '';
-  const hour = parts.find(p => p.type === 'hour')?.value || '';
-  const minute = parts.find(p => p.type === 'minute')?.value || '';
-  
-  return {
-    date: `${year}-${month}-${day}`,
-    time: `${hour}:${minute}`,
-  };
-}
-
-// Helper: Sync booking to Google Calendar
-async function syncBookingToCalendar(
-  spaId: number,
-  bookingId: number,
-  bookingData: any,
-  items: any[]
-): Promise<void> {
-  try {
-    // Check if Google Calendar is connected
-    const integrations = await storage.getSpaIntegrations(spaId);
-    const calendarIntegration = integrations.find(
-      i => i.integrationType === 'google_calendar' && i.status === 'active'
-    );
-
-    if (!calendarIntegration) {
-      console.log('Google Calendar not connected, skipping sync');
-      return;
-    }
-
-    // Get valid access token
-    const accessToken = await getValidAccessToken(
-      calendarIntegration.provider as 'google',
-      calendarIntegration.integrationType,
-      calendarIntegration.encryptedTokens
-    );
-
-    // Get spa details for timezone
-    const spa = await storage.getSpaById(spaId);
-    const spaTimeZone = (spa?.timeZone as string) || 'Asia/Dubai';
-
-    // Get staff details for calendar event
-    let staffEmail: string | undefined;
-    if (bookingData.staffId) {
-      const staff = await storage.getStaffById(bookingData.staffId);
-      if (staff?.email) {
-        staffEmail = staff.email;
-      }
-    }
-
-    // Get customer details
-    const customer = await storage.getCustomerById(bookingData.customerId);
-    
-    // Get service details
-    const allServices = await storage.getAllServices();
-    const services = items.map(item => {
-      return allServices.find((s: any) => s.id === item.serviceId);
-    }).filter(Boolean);
-
-    // Convert booking to calendar event - preserve timezone
-    const serviceNames = services.map((s: any) => ({ name: s.name }));
-    const totalDuration = items.reduce((sum: number, item: any) => sum + (item.duration || 0), 0);
-    
-    // Extract date and time from booking date in the spa's timezone (no UTC conversion)
-    const bookingDateTime = new Date(bookingData.bookingDate);
-    const { date: appointmentDate, time: appointmentTime } = formatDateInTimezone(bookingDateTime, spaTimeZone);
-    
-    const event = googleCalendarService.createEventFromBooking({
-      id: bookingId,
-      customerName: customer?.name || 'Customer',
-      customerEmail: customer?.email,
-      customerPhone: customer?.phone,
-      appointmentDate,
-      appointmentTime,
-      duration: totalDuration || 60,
-      services: serviceNames,
-      spaName: bookingData.spaName || spa?.name,
-      spaAddress: bookingData.spaAddress || spa?.address,
-      timeZone: spaTimeZone, // Google Calendar handles DST automatically with timeZone property
-    });
-
-    // Get staff calendar from integration metadata, fallback to 'primary'
-    const integrationMetadata = calendarIntegration.metadata as any;
-    const calendarId = integrationMetadata?.staffCalendars?.[staffEmail] || 'primary';
-    
-    // Create event in Google Calendar
-    const calendarEvent = await googleCalendarService.createEvent(
-      accessToken,
-      calendarId,
-      event
-    );
-    
-    // Store calendar event ID in booking metadata
-    if (calendarEvent.id) {
-      await storage.updateBooking(bookingId, {
-        metadata: {
-          ...bookingData.metadata,
-          googleCalendarEventId: calendarEvent.id,
-        },
-      });
-    }
-
-    console.log(`Booking ${bookingId} synced to Google Calendar: ${calendarEvent.id}`);
-  } catch (error) {
-    console.error('Failed to sync booking to calendar:', error);
-    // Don't throw - we don't want calendar sync failures to break booking creation
-  }
-}
 import {
   insertSpaSettingsSchema,
   insertServiceCategorySchema,
@@ -182,7 +35,6 @@ import {
   insertMembershipUsageSchema,
   insertStaffSchema,
   insertStaffScheduleSchema,
-  insertStaffEmergencyContactSchema,
   insertStaffTimeEntrySchema,
   insertProductSchema,
   insertCustomerSchema,
@@ -196,13 +48,6 @@ import {
   insertVendorSchema,
   insertExpenseSchema,
   insertBillSchema,
-  insertServiceVariantSchema,
-  insertServiceVariantStaffPricingSchema,
-  insertServiceAddonSchema,
-  insertServiceAddonOptionSchema,
-  insertServiceBundleSchema,
-  insertServiceBundleItemSchema,
-  insertServiceExtraTimeSchema,
 } from "@shared/schema";
 
 // Domain error class for business logic errors
@@ -837,101 +682,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Public spa service variants endpoint
-  app.get("/api/spas/:id/service-variants", async (req, res) => {
-    try {
-      const id = parseNumericId(req.params.id);
-      if (!id) {
-        return res.status(400).json({ message: "Invalid spa ID" });
-      }
-      
-      // Get all services for this spa first
-      const services = await storage.getAllServices();
-      const spaServices = services.filter(s => s.spaId === id);
-      
-      // Fetch variants for all spa services
-      const allVariants = await Promise.all(
-        spaServices.map(s => storage.getServiceVariants(s.id))
-      );
-      
-      // Flatten and filter active variants
-      const spaVariants = allVariants.flat().filter((v: any) => v.active);
-      res.json(spaVariants);
-    } catch (error) {
-      handleRouteError(res, error, "Failed to fetch spa service variants");
-    }
-  });
-
-  // Public spa service add-ons endpoint  
-  app.get("/api/spas/:id/service-addons", async (req, res) => {
-    try {
-      const id = parseNumericId(req.params.id);
-      if (!id) {
-        return res.status(400).json({ message: "Invalid spa ID" });
-      }
-      
-      // Get all services for this spa first
-      const services = await storage.getAllServices();
-      const spaServices = services.filter(s => s.spaId === id);
-      
-      // Fetch add-ons for all spa services
-      const allAddons = await Promise.all(
-        spaServices.map(s => storage.getServiceAddons(s.id))
-      );
-      
-      // Flatten and filter active add-ons
-      const spaAddons = allAddons.flat().filter((a: any) => a.active);
-      
-      // For each add-on group, fetch its options
-      const addonsWithOptions = await Promise.all(
-        spaAddons.map(async (addon: any) => {
-          const options = await storage.getAddonOptions(addon.id);
-          const activeOptions = options.filter((opt: any) => opt.active);
-          return {
-            ...addon,
-            options: activeOptions,
-          };
-        })
-      );
-      
-      // Only return add-on groups that have active options
-      const validAddons = addonsWithOptions.filter((addon: any) => addon.options.length > 0);
-      
-      res.json(validAddons);
-    } catch (error) {
-      handleRouteError(res, error, "Failed to fetch spa service add-ons");
-    }
-  });
-
-  // Public spa service bundles endpoint
-  app.get("/api/spas/:id/service-bundles", async (req, res) => {
-    try {
-      const id = parseNumericId(req.params.id);
-      if (!id) {
-        return res.status(400).json({ message: "Invalid spa ID" });
-      }
-      
-      // Get all bundles for this spa
-      const bundles = await storage.getServiceBundles(id);
-      const activeBundles = bundles.filter((b: any) => b.active && b.onlineBookable);
-      
-      // For each bundle, fetch its items (services)
-      const bundlesWithItems = await Promise.all(
-        activeBundles.map(async (bundle: any) => {
-          const items = await storage.getBundleItems(bundle.id);
-          return {
-            ...bundle,
-            items,
-          };
-        })
-      );
-      
-      res.json(bundlesWithItems);
-    } catch (error) {
-      handleRouteError(res, error, "Failed to fetch spa service bundles");
-    }
-  });
-
   // Get available time slots for a spa
   app.get("/api/spas/:id/available-slots", async (req, res) => {
     try {
@@ -969,7 +719,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Public booking creation endpoint
   app.post("/api/bookings", async (req, res) => {
     try {
-      const { spaId, customerName, customerEmail, customerPhone, services, bookingItems, bookingAddons, bundleId, date, time, staffId, notes } = req.body;
+      const { spaId, customerName, customerEmail, customerPhone, services, date, time, staffId, notes } = req.body;
 
       // Log booking request without PII
       console.log('Booking request received:', { 
@@ -1023,7 +773,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      // Calculate total amount and duration
+      // Calculate total amount and duration using base service prices
       const serviceRecords = await storage.getAllServices();
       const selectedServices = serviceRecords.filter(s => services.includes(s.id));
       const totalAmount = selectedServices.reduce((sum, service) => {
@@ -1075,70 +825,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         staffId: staffId || null,
         bookingDate,
         totalAmount: totalAmount.toString(),
-        bundleId: bundleId || null,
         notes: notes || null,
         status: 'confirmed',
       });
 
-      // Create booking items with variant and addon support
-      if (bookingItems && Array.isArray(bookingItems)) {
-        // Use new bookingItems array with variant information
-        for (const item of bookingItems) {
-          const service = selectedServices.find(s => s.id === item.serviceId);
-          if (service) {
-            // Get variant price if variantId is provided
-            let itemPrice = service.price;
-            let itemDuration = service.duration;
-            
-            if (item.variantId) {
-              const variants = await storage.getServiceVariantsByServiceId(item.serviceId);
-              const variant = variants.find((v: any) => v.id === item.variantId);
-              if (variant) {
-                itemPrice = variant.price;
-                itemDuration = variant.duration;
-              }
-            }
-            
-            // Filter addons for this specific service only
-            let serviceAddonIds: number[] = [];
-            if (bookingAddons && Array.isArray(bookingAddons)) {
-              // Get addon groups for this specific service
-              const serviceAddonGroups = await storage.getServiceAddons(item.serviceId);
-              
-              // For each addon group of this service, check if any selected addons belong to it
-              for (const addonGroup of serviceAddonGroups) {
-                const options = await storage.getAddonOptions(addonGroup.id);
-                const relevantOptionIds = bookingAddons
-                  .filter((addon: any) => options.some((opt: any) => opt.id === addon.optionId))
-                  .map((addon: any) => addon.optionId);
-                serviceAddonIds.push(...relevantOptionIds);
-              }
-            }
-            
-            await storage.createBookingItem({
-              bookingId: booking.id,
-              serviceId: item.serviceId,
-              staffId: staffId || null,
-              variantId: item.variantId || null,
-              addonIds: serviceAddonIds.length > 0 ? serviceAddonIds : null,
-              price: itemPrice.toString(),
-              duration: itemDuration,
-            });
-          }
-        }
-      } else {
-        // Fallback to old behavior for backwards compatibility
-        for (const serviceId of services) {
-          const service = selectedServices.find(s => s.id === serviceId);
-          if (service) {
-            await storage.createBookingItem({
-              bookingId: booking.id,
-              serviceId: service.id,
-              staffId: staffId || null,
-              price: service.price.toString(),
-              duration: service.duration,
-            });
-          }
+      // Create booking items using base service prices
+      for (const serviceId of services) {
+        const service = selectedServices.find(s => s.id === serviceId);
+        if (service) {
+          await storage.createBookingItem({
+            bookingId: booking.id,
+            serviceId: service.id,
+            staffId: staffId || null,
+            price: service.price.toString(),
+            duration: service.duration,
+          });
         }
       }
 
@@ -1210,8 +911,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 if (updatedSpa) {
                   // Only send notification if flag update succeeded
                   // Send notification to spa admin (async, non-blocking)
-                  const users = await storage.getAllUsers();
-                  const spaOwner = users.find(u => u.adminSpaId === spaId && u.role === 'admin');
+                  const spaOwner = spa.ownerUserId ? await storage.getUser(spa.ownerUserId) : null;
                   if (spaOwner?.email) {
                     const templateData = {
                       spaName: spa.name,
@@ -2024,7 +1724,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // VAT Settings routes
   app.get("/api/admin/vat-settings", isAdmin, async (req, res) => {
     try {
-      const user = await storage.getUserByReplitId((req.user as any)?.id);
+      const user = await storage.getUser((req.user as any)?.id);
       if (!user?.adminSpaId) {
         return res.status(400).json({ message: "No spa found" });
       }
@@ -2047,7 +1747,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.put("/api/admin/vat-settings", isAdmin, async (req, res) => {
     try {
-      const user = await storage.getUserByReplitId((req.user as any)?.id);
+      const user = await storage.getUser((req.user as any)?.id);
       if (!user?.adminSpaId) {
         return res.status(400).json({ message: "No spa found" });
       }
@@ -2099,7 +1799,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // VAT Threshold Reminder routes
   app.get("/api/admin/vat-threshold-reminder", isAdmin, async (req, res) => {
     try {
-      const user = await storage.getUserByReplitId((req.user as any)?.id);
+      const user = await storage.getUser((req.user as any)?.id);
       if (!user?.adminSpaId) {
         return res.status(400).json({ message: "No spa found" });
       }
@@ -2132,7 +1832,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.put("/api/admin/vat-threshold-reminder", isAdmin, async (req, res) => {
     try {
-      const user = await storage.getUserByReplitId((req.user as any)?.id);
+      const user = await storage.getUser((req.user as any)?.id);
       if (!user?.adminSpaId) {
         return res.status(400).json({ message: "No spa found" });
       }
@@ -2167,7 +1867,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Invoice Management routes
   app.delete("/api/admin/invoices/:id", isAdmin, async (req, res) => {
     try {
-      const user = await storage.getUserByReplitId((req.user as any)?.id);
+      const user = await storage.getUser((req.user as any)?.id);
       if (!user?.adminSpaId) {
         return res.status(400).json({ message: "No spa found" });
       }
@@ -2225,7 +1925,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Notification Settings routes
   app.get("/api/admin/notification-settings", isAdmin, async (req, res) => {
     try {
-      const user = await storage.getUserByReplitId((req.user as any)?.id);
+      const user = await storage.getUser((req.user as any)?.id);
       if (!user?.adminSpaId) {
         return res.status(400).json({ message: "No spa found" });
       }
@@ -2240,7 +1940,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.put("/api/admin/notification-settings", isAdmin, async (req, res) => {
     try {
-      const user = await storage.getUserByReplitId((req.user as any)?.id);
+      const user = await storage.getUser((req.user as any)?.id);
       if (!user?.adminSpaId) {
         return res.status(400).json({ message: "No spa found" });
       }
@@ -2396,572 +2096,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ success: true });
     } catch (error) {
       handleRouteError(res, error, "Failed to delete service");
-    }
-  });
-
-  // ============================================
-  // MARKETPLACE FEATURES (Phase 1) - API Routes
-  // ============================================
-
-  // Service Variants routes
-  app.get("/api/admin/services/:serviceId/variants", isAdmin, async (req, res) => {
-    try {
-      const serviceId = parseNumericId(req.params.serviceId);
-      if (!serviceId) {
-        return res.status(400).json({ message: "Invalid service ID" });
-      }
-      
-      const variants = await storage.getServiceVariants(serviceId);
-      res.json(variants);
-    } catch (error) {
-      handleRouteError(res, error, "Failed to fetch service variants");
-    }
-  });
-
-  app.get("/api/admin/variants/:id", isAdmin, async (req, res) => {
-    try {
-      const id = parseNumericId(req.params.id);
-      if (!id) {
-        return res.status(400).json({ message: "Invalid variant ID" });
-      }
-      
-      const variant = await storage.getServiceVariantById(id);
-      if (!variant) {
-        return res.status(404).json({ message: "Variant not found" });
-      }
-      
-      // Get staff pricing for this variant
-      const staffPricing = await storage.getVariantStaffPricing(id);
-      
-      res.json({ ...variant, staffPricing });
-    } catch (error) {
-      handleRouteError(res, error, "Failed to fetch variant");
-    }
-  });
-
-  app.post("/api/admin/services/:serviceId/variants", isAdmin, injectAdminSpa, ensureSetupComplete, async (req: any, res) => {
-    try {
-      const serviceId = parseNumericId(req.params.serviceId);
-      if (!serviceId) {
-        return res.status(400).json({ message: "Invalid service ID" });
-      }
-      
-      const validatedData = insertServiceVariantSchema.parse({
-        ...req.body,
-        serviceId,
-        spaId: req.spaId,
-      });
-      
-      const variant = await storage.createServiceVariant(validatedData);
-      
-      // Log variant creation to audit trail
-      await AuditLogger.logCreate(req, "service_variant", variant.id, variant, req.spaId);
-      
-      res.status(201).json(variant);
-    } catch (error) {
-      handleRouteError(res, error, "Failed to create service variant");
-    }
-  });
-
-  app.put("/api/admin/variants/:id", isAdmin, injectAdminSpa, ensureSetupComplete, async (req: any, res) => {
-    try {
-      const id = parseNumericId(req.params.id);
-      if (!id) {
-        return res.status(400).json({ message: "Invalid variant ID" });
-      }
-      
-      const before = await storage.getServiceVariantById(id);
-      const validatedData = insertServiceVariantSchema.partial().parse(req.body);
-      const variant = await storage.updateServiceVariant(id, validatedData);
-      
-      if (!variant) {
-        return res.status(404).json({ message: "Variant not found" });
-      }
-      
-      // Log variant update to audit trail
-      if (before) {
-        await AuditLogger.logUpdate(req, "service_variant", id, before, validatedData, variant.spaId);
-      }
-      
-      res.json(variant);
-    } catch (error) {
-      handleRouteError(res, error, "Failed to update variant");
-    }
-  });
-
-  app.delete("/api/admin/variants/:id", isAdmin, injectAdminSpa, ensureSetupComplete, async (req: any, res) => {
-    try {
-      const id = parseNumericId(req.params.id);
-      if (!id) {
-        return res.status(400).json({ message: "Invalid variant ID" });
-      }
-      
-      const variant = await storage.getServiceVariantById(id);
-      const deleted = await storage.deleteServiceVariant(id);
-      
-      if (!deleted) {
-        return res.status(404).json({ message: "Variant not found" });
-      }
-      
-      // Log variant deletion to audit trail
-      if (variant) {
-        await AuditLogger.logDelete(req, "service_variant", id, variant, variant.spaId);
-      }
-      
-      res.json({ success: true });
-    } catch (error) {
-      handleRouteError(res, error, "Failed to delete variant");
-    }
-  });
-
-  // Service Variant Staff Pricing routes
-  app.get("/api/admin/variants/:variantId/staff-pricing", isAdmin, async (req, res) => {
-    try {
-      const variantId = parseNumericId(req.params.variantId);
-      if (!variantId) {
-        return res.status(400).json({ message: "Invalid variant ID" });
-      }
-      
-      const pricing = await storage.getVariantStaffPricing(variantId);
-      res.json(pricing);
-    } catch (error) {
-      handleRouteError(res, error, "Failed to fetch variant staff pricing");
-    }
-  });
-
-  app.post("/api/admin/variants/:variantId/staff-pricing", isAdmin, injectAdminSpa, ensureSetupComplete, async (req: any, res) => {
-    try {
-      const variantId = parseNumericId(req.params.variantId);
-      if (!variantId) {
-        return res.status(400).json({ message: "Invalid variant ID" });
-      }
-      
-      const validatedData = insertServiceVariantStaffPricingSchema.parse({
-        ...req.body,
-        variantId,
-      });
-      
-      const pricing = await storage.createVariantStaffPricing(validatedData);
-      
-      // Log staff pricing creation to audit trail
-      const variant = await storage.getServiceVariantById(variantId);
-      if (variant) {
-        await AuditLogger.logCreate(req, "variant_staff_pricing", pricing.id, pricing, variant.spaId);
-      }
-      
-      res.status(201).json(pricing);
-    } catch (error) {
-      handleRouteError(res, error, "Failed to create variant staff pricing");
-    }
-  });
-
-  app.put("/api/admin/variant-staff-pricing/:id", isAdmin, injectAdminSpa, ensureSetupComplete, async (req: any, res) => {
-    try {
-      const id = parseNumericId(req.params.id);
-      if (!id) {
-        return res.status(400).json({ message: "Invalid pricing ID" });
-      }
-      
-      const before = await storage.getVariantStaffPricingByStaff(req.body.variantId, req.body.staffId);
-      const validatedData = insertServiceVariantStaffPricingSchema.partial().parse(req.body);
-      const pricing = await storage.updateVariantStaffPricing(id, validatedData);
-      
-      if (!pricing) {
-        return res.status(404).json({ message: "Pricing not found" });
-      }
-      
-      res.json(pricing);
-    } catch (error) {
-      handleRouteError(res, error, "Failed to update variant staff pricing");
-    }
-  });
-
-  app.delete("/api/admin/variant-staff-pricing/:id", isAdmin, injectAdminSpa, ensureSetupComplete, async (req: any, res) => {
-    try {
-      const id = parseNumericId(req.params.id);
-      if (!id) {
-        return res.status(400).json({ message: "Invalid pricing ID" });
-      }
-      
-      const deleted = await storage.deleteVariantStaffPricing(id);
-      if (!deleted) {
-        return res.status(404).json({ message: "Pricing not found" });
-      }
-      
-      res.json({ success: true });
-    } catch (error) {
-      handleRouteError(res, error, "Failed to delete variant staff pricing");
-    }
-  });
-
-  // Service Add-ons routes
-  app.get("/api/admin/services/:serviceId/addons", isAdmin, async (req, res) => {
-    try {
-      const serviceId = parseNumericId(req.params.serviceId);
-      if (!serviceId) {
-        return res.status(400).json({ message: "Invalid service ID" });
-      }
-      
-      const addons = await storage.getServiceAddons(serviceId);
-      res.json(addons);
-    } catch (error) {
-      handleRouteError(res, error, "Failed to fetch service add-ons");
-    }
-  });
-
-  app.get("/api/admin/addons/:id", isAdmin, async (req, res) => {
-    try {
-      const id = parseNumericId(req.params.id);
-      if (!id) {
-        return res.status(400).json({ message: "Invalid add-on ID" });
-      }
-      
-      const addon = await storage.getServiceAddonById(id);
-      if (!addon) {
-        return res.status(404).json({ message: "Add-on not found" });
-      }
-      
-      // Get options for this add-on
-      const options = await storage.getAddonOptions(id);
-      
-      res.json({ ...addon, options });
-    } catch (error) {
-      handleRouteError(res, error, "Failed to fetch add-on");
-    }
-  });
-
-  app.post("/api/admin/services/:serviceId/addons", isAdmin, injectAdminSpa, ensureSetupComplete, async (req: any, res) => {
-    try {
-      const serviceId = parseNumericId(req.params.serviceId);
-      if (!serviceId) {
-        return res.status(400).json({ message: "Invalid service ID" });
-      }
-      
-      const validatedData = insertServiceAddonSchema.parse({
-        ...req.body,
-        serviceId,
-        spaId: req.spaId,
-      });
-      
-      const addon = await storage.createServiceAddon(validatedData);
-      
-      // Log add-on creation to audit trail
-      await AuditLogger.logCreate(req, "service_addon", addon.id, addon, req.spaId);
-      
-      res.status(201).json(addon);
-    } catch (error) {
-      handleRouteError(res, error, "Failed to create service add-on");
-    }
-  });
-
-  app.put("/api/admin/addons/:id", isAdmin, injectAdminSpa, ensureSetupComplete, async (req: any, res) => {
-    try {
-      const id = parseNumericId(req.params.id);
-      if (!id) {
-        return res.status(400).json({ message: "Invalid add-on ID" });
-      }
-      
-      const before = await storage.getServiceAddonById(id);
-      const validatedData = insertServiceAddonSchema.partial().parse(req.body);
-      const addon = await storage.updateServiceAddon(id, validatedData);
-      
-      if (!addon) {
-        return res.status(404).json({ message: "Add-on not found" });
-      }
-      
-      // Log add-on update to audit trail
-      if (before) {
-        await AuditLogger.logUpdate(req, "service_addon", id, before, validatedData, addon.spaId);
-      }
-      
-      res.json(addon);
-    } catch (error) {
-      handleRouteError(res, error, "Failed to update add-on");
-    }
-  });
-
-  app.delete("/api/admin/addons/:id", isAdmin, injectAdminSpa, ensureSetupComplete, async (req: any, res) => {
-    try {
-      const id = parseNumericId(req.params.id);
-      if (!id) {
-        return res.status(400).json({ message: "Invalid add-on ID" });
-      }
-      
-      const addon = await storage.getServiceAddonById(id);
-      const deleted = await storage.deleteServiceAddon(id);
-      
-      if (!deleted) {
-        return res.status(404).json({ message: "Add-on not found" });
-      }
-      
-      // Log add-on deletion to audit trail
-      if (addon) {
-        await AuditLogger.logDelete(req, "service_addon", id, addon, addon.spaId);
-      }
-      
-      res.json({ success: true });
-    } catch (error) {
-      handleRouteError(res, error, "Failed to delete add-on");
-    }
-  });
-
-  // Service Add-on Options routes
-  app.get("/api/admin/addons/:addonId/options", isAdmin, async (req, res) => {
-    try {
-      const addonId = parseNumericId(req.params.addonId);
-      if (!addonId) {
-        return res.status(400).json({ message: "Invalid add-on ID" });
-      }
-      
-      const options = await storage.getAddonOptions(addonId);
-      res.json(options);
-    } catch (error) {
-      handleRouteError(res, error, "Failed to fetch add-on options");
-    }
-  });
-
-  app.post("/api/admin/addons/:addonId/options", isAdmin, injectAdminSpa, ensureSetupComplete, async (req: any, res) => {
-    try {
-      const addonId = parseNumericId(req.params.addonId);
-      if (!addonId) {
-        return res.status(400).json({ message: "Invalid add-on ID" });
-      }
-      
-      const validatedData = insertServiceAddonOptionSchema.parse({
-        ...req.body,
-        addonId,
-      });
-      
-      const option = await storage.createAddonOption(validatedData);
-      
-      // Log option creation to audit trail
-      const addon = await storage.getServiceAddonById(addonId);
-      if (addon) {
-        await AuditLogger.logCreate(req, "addon_option", option.id, option, addon.spaId);
-      }
-      
-      res.status(201).json(option);
-    } catch (error) {
-      handleRouteError(res, error, "Failed to create add-on option");
-    }
-  });
-
-  app.put("/api/admin/addon-options/:id", isAdmin, injectAdminSpa, ensureSetupComplete, async (req: any, res) => {
-    try {
-      const id = parseNumericId(req.params.id);
-      if (!id) {
-        return res.status(400).json({ message: "Invalid option ID" });
-      }
-      
-      const before = await storage.getAddonOptionById(id);
-      const validatedData = insertServiceAddonOptionSchema.partial().parse(req.body);
-      const option = await storage.updateAddonOption(id, validatedData);
-      
-      if (!option) {
-        return res.status(404).json({ message: "Option not found" });
-      }
-      
-      res.json(option);
-    } catch (error) {
-      handleRouteError(res, error, "Failed to update add-on option");
-    }
-  });
-
-  app.delete("/api/admin/addon-options/:id", isAdmin, injectAdminSpa, ensureSetupComplete, async (req: any, res) => {
-    try {
-      const id = parseNumericId(req.params.id);
-      if (!id) {
-        return res.status(400).json({ message: "Invalid option ID" });
-      }
-      
-      const deleted = await storage.deleteAddonOption(id);
-      if (!deleted) {
-        return res.status(404).json({ message: "Option not found" });
-      }
-      
-      res.json({ success: true });
-    } catch (error) {
-      handleRouteError(res, error, "Failed to delete add-on option");
-    }
-  });
-
-  // Service Bundles routes
-  app.get("/api/admin/bundles", isAdmin, injectAdminSpa, async (req: any, res) => {
-    try {
-      const bundles = await storage.getServiceBundles(req.spaId);
-      res.json(bundles);
-    } catch (error) {
-      handleRouteError(res, error, "Failed to fetch service bundles");
-    }
-  });
-
-  app.get("/api/admin/bundles/:id", isAdmin, async (req, res) => {
-    try {
-      const id = parseNumericId(req.params.id);
-      if (!id) {
-        return res.status(400).json({ message: "Invalid bundle ID" });
-      }
-      
-      const bundle = await storage.getServiceBundleById(id);
-      if (!bundle) {
-        return res.status(404).json({ message: "Bundle not found" });
-      }
-      
-      // Get items for this bundle
-      const items = await storage.getBundleItems(id);
-      
-      res.json({ ...bundle, items });
-    } catch (error) {
-      handleRouteError(res, error, "Failed to fetch bundle");
-    }
-  });
-
-  app.post("/api/admin/bundles", isAdmin, injectAdminSpa, ensureSetupComplete, async (req: any, res) => {
-    try {
-      const validatedData = insertServiceBundleSchema.parse({
-        ...req.body,
-        spaId: req.spaId,
-      });
-      
-      const bundle = await storage.createServiceBundle(validatedData);
-      
-      // Log bundle creation to audit trail
-      await AuditLogger.logCreate(req, "service_bundle", bundle.id, bundle, req.spaId);
-      
-      res.status(201).json(bundle);
-    } catch (error) {
-      handleRouteError(res, error, "Failed to create service bundle");
-    }
-  });
-
-  app.put("/api/admin/bundles/:id", isAdmin, injectAdminSpa, ensureSetupComplete, async (req: any, res) => {
-    try {
-      const id = parseNumericId(req.params.id);
-      if (!id) {
-        return res.status(400).json({ message: "Invalid bundle ID" });
-      }
-      
-      const before = await storage.getServiceBundleById(id);
-      const validatedData = insertServiceBundleSchema.partial().parse(req.body);
-      const bundle = await storage.updateServiceBundle(id, validatedData);
-      
-      if (!bundle) {
-        return res.status(404).json({ message: "Bundle not found" });
-      }
-      
-      // Log bundle update to audit trail
-      if (before) {
-        await AuditLogger.logUpdate(req, "service_bundle", id, before, validatedData, bundle.spaId);
-      }
-      
-      res.json(bundle);
-    } catch (error) {
-      handleRouteError(res, error, "Failed to update bundle");
-    }
-  });
-
-  app.delete("/api/admin/bundles/:id", isAdmin, injectAdminSpa, ensureSetupComplete, async (req: any, res) => {
-    try {
-      const id = parseNumericId(req.params.id);
-      if (!id) {
-        return res.status(400).json({ message: "Invalid bundle ID" });
-      }
-      
-      const bundle = await storage.getServiceBundleById(id);
-      const deleted = await storage.deleteServiceBundle(id);
-      
-      if (!deleted) {
-        return res.status(404).json({ message: "Bundle not found" });
-      }
-      
-      // Log bundle deletion to audit trail
-      if (bundle) {
-        await AuditLogger.logDelete(req, "service_bundle", id, bundle, bundle.spaId);
-      }
-      
-      res.json({ success: true });
-    } catch (error) {
-      handleRouteError(res, error, "Failed to delete bundle");
-    }
-  });
-
-  // Service Bundle Items routes
-  app.get("/api/admin/bundles/:bundleId/items", isAdmin, async (req, res) => {
-    try {
-      const bundleId = parseNumericId(req.params.bundleId);
-      if (!bundleId) {
-        return res.status(400).json({ message: "Invalid bundle ID" });
-      }
-      
-      const items = await storage.getBundleItems(bundleId);
-      res.json(items);
-    } catch (error) {
-      handleRouteError(res, error, "Failed to fetch bundle items");
-    }
-  });
-
-  app.post("/api/admin/bundles/:bundleId/items", isAdmin, injectAdminSpa, ensureSetupComplete, async (req: any, res) => {
-    try {
-      const bundleId = parseNumericId(req.params.bundleId);
-      if (!bundleId) {
-        return res.status(400).json({ message: "Invalid bundle ID" });
-      }
-      
-      const validatedData = insertServiceBundleItemSchema.parse({
-        ...req.body,
-        bundleId,
-      });
-      
-      const item = await storage.createBundleItem(validatedData);
-      
-      // Log bundle item creation to audit trail
-      const bundle = await storage.getServiceBundleById(bundleId);
-      if (bundle) {
-        await AuditLogger.logCreate(req, "bundle_item", item.id, item, bundle.spaId);
-      }
-      
-      res.status(201).json(item);
-    } catch (error) {
-      handleRouteError(res, error, "Failed to create bundle item");
-    }
-  });
-
-  app.put("/api/admin/bundle-items/:id", isAdmin, injectAdminSpa, ensureSetupComplete, async (req: any, res) => {
-    try {
-      const id = parseNumericId(req.params.id);
-      if (!id) {
-        return res.status(400).json({ message: "Invalid item ID" });
-      }
-      
-      const before = await storage.getBundleItemById(id);
-      const validatedData = insertServiceBundleItemSchema.partial().parse(req.body);
-      const item = await storage.updateBundleItem(id, validatedData);
-      
-      if (!item) {
-        return res.status(404).json({ message: "Item not found" });
-      }
-      
-      res.json(item);
-    } catch (error) {
-      handleRouteError(res, error, "Failed to update bundle item");
-    }
-  });
-
-  app.delete("/api/admin/bundle-items/:id", isAdmin, injectAdminSpa, ensureSetupComplete, async (req: any, res) => {
-    try {
-      const id = parseNumericId(req.params.id);
-      if (!id) {
-        return res.status(400).json({ message: "Invalid item ID" });
-      }
-      
-      const deleted = await storage.deleteBundleItem(id);
-      if (!deleted) {
-        return res.status(404).json({ message: "Item not found" });
-      }
-      
-      res.json({ success: true });
-    } catch (error) {
-      handleRouteError(res, error, "Failed to delete bundle item");
     }
   });
 
@@ -3402,88 +2536,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error deleting staff schedule:", error);
       res.status(500).json({ message: "Failed to delete staff schedule" });
-    }
-  });
-
-  // Staff Emergency Contact routes
-  app.get("/api/admin/staff/:staffId/emergency-contacts", isAdmin, async (req, res) => {
-    try {
-      const staffId = parseNumericId(req.params.staffId);
-      if (!staffId) {
-        return res.status(400).json({ message: "Invalid staff ID" });
-      }
-      const contacts = await storage.getStaffEmergencyContacts(staffId);
-      res.json(contacts);
-    } catch (error) {
-      handleRouteError(res, error, "Failed to fetch emergency contacts");
-    }
-  });
-
-  app.post("/api/admin/staff/:staffId/emergency-contacts", isAdmin, injectAdminSpa, ensureSetupComplete, async (req: any, res) => {
-    try {
-      const staffId = parseNumericId(req.params.staffId);
-      if (!staffId) {
-        return res.status(400).json({ message: "Invalid staff ID" });
-      }
-      
-      const validatedData = insertStaffEmergencyContactSchema.parse({ ...req.body, staffId });
-      const contact = await storage.createStaffEmergencyContact(validatedData);
-      
-      // Log to audit trail
-      await AuditLogger.logCreate(req, "staff_emergency_contact", contact.id, contact, req.adminSpaId);
-      
-      res.json(contact);
-    } catch (error) {
-      handleRouteError(res, error, "Failed to create emergency contact");
-    }
-  });
-
-  app.put("/api/admin/staff/:staffId/emergency-contacts/:id", isAdmin, injectAdminSpa, ensureSetupComplete, async (req: any, res) => {
-    try {
-      const id = parseNumericId(req.params.id);
-      if (!id) {
-        return res.status(400).json({ message: "Invalid contact ID" });
-      }
-      
-      const validatedData = insertStaffEmergencyContactSchema.partial().parse(req.body);
-      const contact = await storage.updateStaffEmergencyContact(id, validatedData);
-      
-      if (!contact) {
-        return res.status(404).json({ message: "Emergency contact not found" });
-      }
-      
-      // Log to audit trail
-      await AuditLogger.logUpdate(req, "staff_emergency_contact", id, validatedData, contact, req.adminSpaId);
-      
-      res.json(contact);
-    } catch (error) {
-      handleRouteError(res, error, "Failed to update emergency contact");
-    }
-  });
-
-  app.delete("/api/admin/staff/:staffId/emergency-contacts/:id", isAdmin, injectAdminSpa, ensureSetupComplete, async (req: any, res) => {
-    try {
-      const id = parseNumericId(req.params.id);
-      if (!id) {
-        return res.status(400).json({ message: "Invalid contact ID" });
-      }
-      
-      const contact = await storage.getStaffEmergencyContacts(parseInt(req.params.staffId));
-      const contactToDelete = contact.find(c => c.id === id);
-      
-      const deleted = await storage.deleteStaffEmergencyContact(id);
-      if (!deleted) {
-        return res.status(404).json({ message: "Emergency contact not found" });
-      }
-      
-      // Log to audit trail
-      if (contactToDelete) {
-        await AuditLogger.logDelete(req, "staff_emergency_contact", id, contactToDelete, req.adminSpaId);
-      }
-      
-      res.json({ success: true });
-    } catch (error) {
-      handleRouteError(res, error, "Failed to delete emergency contact");
     }
   });
 
@@ -3932,13 +2984,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
       
-      // Sync to Google Calendar (non-blocking)
-      if (booking.spaId) {
-        syncBookingToCalendar(booking.spaId, booking.id, booking, createdItems).catch(err => {
-          console.error('Calendar sync error:', err);
-        });
-      }
-      
       res.json(booking);
     } catch (error) {
       console.error("Error creating booking:", error);
@@ -3983,13 +3028,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
-      // Sync to Google Calendar (update existing event)
-      if (booking.spaId && booking.metadata?.googleCalendarEventId) {
-        syncBookingToCalendar(booking.spaId, booking.id, booking, updatedItems).catch(err => {
-          console.error('Calendar sync error:', err);
-        });
-      }
-
       res.json(booking);
     } catch (error: any) {
       if (error.name === "ZodError") {
@@ -4010,34 +3048,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const deleted = await storage.deleteBooking(id);
       if (!deleted) {
         return res.status(404).json({ message: "Booking not found" });
-      }
-
-      // Delete from Google Calendar if synced
-      if (booking && booking.spaId && booking.metadata?.googleCalendarEventId) {
-        try {
-          const integrations = await storage.getSpaIntegrations(booking.spaId);
-          const calendarIntegration = integrations.find(
-            i => i.integrationType === 'google_calendar' && i.status === 'active'
-          );
-
-          if (calendarIntegration) {
-            const accessToken = await getValidAccessToken(
-              calendarIntegration.provider as 'google',
-              calendarIntegration.integrationType,
-              calendarIntegration.encryptedTokens
-            );
-
-            await googleCalendarService.deleteEvent(
-              accessToken,
-              'primary',
-              booking.metadata.googleCalendarEventId
-            );
-            console.log(`Deleted calendar event ${booking.metadata.googleCalendarEventId} for booking ${id}`);
-          }
-        } catch (error) {
-          console.error('Failed to delete calendar event:', error);
-          // Don't fail the booking deletion if calendar deletion fails
-        }
       }
 
       res.json({ success: true });
