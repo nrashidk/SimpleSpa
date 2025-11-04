@@ -135,139 +135,6 @@ export const services = pgTable("services", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
-// ============================================
-// MARKETPLACE FEATURES (Phase 1)
-// ============================================
-
-// Service Variants - Multi-tier pricing for services
-// Example: "Haircut - Senior Stylist ($80)" vs "Haircut - Junior Stylist ($50)"
-export const serviceVariants = pgTable("service_variants", {
-  id: serial("id").primaryKey(),
-  serviceId: integer("service_id").references(() => services.id, { onDelete: "cascade" }).notNull(),
-  spaId: integer("spa_id").references(() => spas.id).notNull(),
-  name: text("name").notNull(), // "Senior Stylist", "Junior Stylist", "Premium Package"
-  description: text("description"),
-  duration: integer("duration").notNull(), // in minutes
-  price: decimal("price", { precision: 10, scale: 2 }).notNull(),
-  sku: text("sku"), // Optional SKU for inventory tracking
-  displayOrder: integer("display_order").default(0),
-  active: boolean("active").default(true).notNull(),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(),
-}, (table) => [
-  index("idx_service_variants_service").on(table.serviceId),
-  index("idx_service_variants_spa").on(table.spaId),
-  index("idx_service_variants_active").on(table.active),
-]);
-
-// Service Variant Staff Pricing - Different prices per staff member
-export const serviceVariantStaffPricing = pgTable("service_variant_staff_pricing", {
-  id: serial("id").primaryKey(),
-  variantId: integer("variant_id").references(() => serviceVariants.id, { onDelete: "cascade" }).notNull(),
-  staffId: integer("staff_id").references(() => staff.id, { onDelete: "cascade" }).notNull(),
-  price: decimal("price", { precision: 10, scale: 2 }).notNull(),
-  duration: integer("duration"), // Optional: override duration for specific staff
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-}, (table) => [
-  index("idx_variant_staff_pricing_variant").on(table.variantId),
-  index("idx_variant_staff_pricing_staff").on(table.staffId),
-  uniqueIndex("idx_variant_staff_unique").on(table.variantId, table.staffId),
-]);
-
-// Service Add-ons - Upsell options during booking
-// Example: "Hair Treatment Options" with choices like "Deep Conditioning (+$20)", "Keratin Treatment (+$50)"
-export const serviceAddons = pgTable("service_addons", {
-  id: serial("id").primaryKey(),
-  serviceId: integer("service_id").references(() => services.id, { onDelete: "cascade" }).notNull(),
-  spaId: integer("spa_id").references(() => spas.id).notNull(),
-  groupName: text("group_name").notNull(), // "Hair Treatment Options", "Nail Polish Selection"
-  promptText: text("prompt_text"), // "Would you like to add any treatments?"
-  selectionType: text("selection_type").notNull().default("single"), // single, multiple
-  required: boolean("required").default(false),
-  displayOrder: integer("display_order").default(0),
-  active: boolean("active").default(true),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(),
-}, (table) => [
-  index("idx_service_addons_service").on(table.serviceId),
-  index("idx_service_addons_spa").on(table.spaId),
-  index("idx_service_addons_active").on(table.active),
-]);
-
-// Service Add-on Options - Individual choices within an add-on group
-export const serviceAddonOptions = pgTable("service_addon_options", {
-  id: serial("id").primaryKey(),
-  addonId: integer("addon_id").references(() => serviceAddons.id, { onDelete: "cascade" }).notNull(),
-  name: text("name").notNull(), // "Deep Conditioning", "Keratin Treatment"
-  description: text("description"),
-  price: decimal("price", { precision: 10, scale: 2 }).notNull(),
-  extraTimeMinutes: integer("extra_time_minutes").default(0), // Additional time added to appointment
-  displayOrder: integer("display_order").default(0),
-  active: boolean("active").default(true),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(),
-}, (table) => [
-  index("idx_addon_options_addon").on(table.addonId),
-  index("idx_addon_options_active").on(table.active),
-]);
-
-// Service Bundles/Packages - Multi-service combinations
-// Example: "Spa Day Package" = Massage + Facial + Pedicure
-export const serviceBundles = pgTable("service_bundles", {
-  id: serial("id").primaryKey(),
-  spaId: integer("spa_id").references(() => spas.id).notNull(),
-  categoryId: integer("category_id").references(() => serviceCategories.id),
-  name: text("name").notNull(), // "Spa Day Package", "Bridal Package"
-  description: text("description"),
-  priceType: text("price_type").notNull().default("custom"), // custom, calculated (sum of services)
-  customPrice: decimal("custom_price", { precision: 10, scale: 2 }), // Used when priceType = 'custom'
-  discountPercent: decimal("discount_percent", { precision: 5, scale: 2 }), // Discount off total service prices
-  gender: text("gender").default("any"), // any, male, female
-  featured: boolean("featured").default(false),
-  onlineBookable: boolean("online_bookable").default(true),
-  active: boolean("active").default(true),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(),
-}, (table) => [
-  index("idx_service_bundles_spa").on(table.spaId),
-  index("idx_service_bundles_category").on(table.categoryId),
-  index("idx_service_bundles_active").on(table.active),
-  index("idx_service_bundles_featured").on(table.featured),
-]);
-
-// Service Bundle Items - Services included in a bundle
-export const serviceBundleItems = pgTable("service_bundle_items", {
-  id: serial("id").primaryKey(),
-  bundleId: integer("bundle_id").references(() => serviceBundles.id, { onDelete: "cascade" }).notNull(),
-  serviceId: integer("service_id").references(() => services.id, { onDelete: "cascade" }).notNull(),
-  variantId: integer("variant_id").references(() => serviceVariants.id, { onDelete: "set null" }), // Optional: specific variant
-  quantity: integer("quantity").default(1), // Number of times this service is included
-  displayOrder: integer("display_order").default(0),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-}, (table) => [
-  index("idx_bundle_items_bundle").on(table.bundleId),
-  index("idx_bundle_items_service").on(table.serviceId),
-  index("idx_bundle_items_variant").on(table.variantId),
-]);
-
-// Service Extra Time - Processing/blocked/servicing time for better scheduling
-export const serviceExtraTime = pgTable("service_extra_time", {
-  id: serial("id").primaryKey(),
-  serviceId: integer("service_id").references(() => services.id, { onDelete: "cascade" }).notNull(),
-  spaId: integer("spa_id").references(() => spas.id).notNull(),
-  timeType: text("time_type").notNull(), // processing, blocked, servicing
-  durationMinutes: integer("duration_minutes").notNull(),
-  description: text("description"), // "Setup time", "Cleanup time"
-  displayOrder: integer("display_order").default(0),
-  active: boolean("active").default(true),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(),
-}, (table) => [
-  index("idx_extra_time_service").on(table.serviceId),
-  index("idx_extra_time_spa").on(table.spaId),
-  index("idx_extra_time_type").on(table.timeType),
-  index("idx_extra_time_active").on(table.active),
-]);
 
 // Staff roles and permissions
 export const staffRoles = {
@@ -318,7 +185,6 @@ export const staff = pgTable("staff", {
   specialty: text("specialty"),
   email: text("email"),
   phone: text("phone"),
-  birthday: date("birthday"), // Staff birthday for birthday reminders
   role: text("role").notNull().default("basic"), // basic, view_own_calendar, view_all_calendars, manage_bookings, admin_access
   commissionRate: decimal("commission_rate", { precision: 5, scale: 2 }).default("0.00"), // percentage
   hourlyRate: decimal("hourly_rate", { precision: 10, scale: 2 }),
@@ -337,20 +203,6 @@ export const staffSchedules = pgTable("staff_schedules", {
   startTime: text("start_time").notNull(), // HH:MM format
   endTime: text("end_time").notNull(),
   active: boolean("active").default(true),
-});
-
-// Staff emergency contacts
-export const staffEmergencyContacts = pgTable("staff_emergency_contacts", {
-  id: serial("id").primaryKey(),
-  staffId: integer("staff_id").references(() => staff.id, { onDelete: "cascade" }).notNull(),
-  name: text("name").notNull(),
-  relationship: text("relationship").notNull(), // spouse, parent, sibling, friend, etc.
-  phoneNumber: text("phone_number").notNull(),
-  alternatePhone: text("alternate_phone"),
-  email: text("email"),
-  isPrimary: boolean("is_primary").default(false),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
 // Products for inventory
@@ -446,7 +298,6 @@ export const customers = pgTable("customers", {
   email: text("email"),
   phone: text("phone"),
   gender: text("gender"), // male, female, other, prefer-not-to-say
-  birthday: timestamp("birthday"), // Date of birth
   address: jsonb("address"), // { street, city, area, emirate, postalCode }
   taxRegistrationNumber: varchar("tax_registration_number", { length: 15 }), // UAE TRN for B2B customers
   loyaltyPoints: integer("loyalty_points").default(0),
@@ -524,7 +375,6 @@ export const bookings = pgTable("bookings", {
   status: text("status").notNull().default("confirmed"), // confirmed, completed, cancelled, no-show, modified
   totalAmount: decimal("total_amount", { precision: 10, scale: 2 }),
   promoCodeId: integer("promo_code_id").references(() => promoCodes.id), // track which promo code was used
-  bundleId: integer("bundle_id").references(() => serviceBundles.id), // track if booking was made from a bundle
   discountType: text("discount_type"), // flat, percentage
   discountValue: decimal("discount_value", { precision: 10, scale: 2 }).default("0.00"), // e.g., 50 for AED 50 or 20 for 20%
   discountAmount: decimal("discount_amount", { precision: 10, scale: 2 }).default("0.00"), // calculated discount amount
@@ -540,7 +390,6 @@ export const bookings = pgTable("bookings", {
   index("idx_bookings_status").on(table.status),
   index("idx_bookings_spa").on(table.spaId),
   index("idx_bookings_promo_code").on(table.promoCodeId),
-  index("idx_bookings_bundle").on(table.bundleId),
 ]);
 
 // Booking items (services in a booking)
@@ -549,14 +398,11 @@ export const bookingItems = pgTable("booking_items", {
   bookingId: integer("booking_id").references(() => bookings.id).notNull(),
   serviceId: integer("service_id").references(() => services.id).notNull(),
   staffId: integer("staff_id").references(() => staff.id),
-  variantId: integer("variant_id").references(() => serviceVariants.id), // selected variant for the service
-  addonIds: jsonb("addon_ids").$type<number[]>(), // array of selected add-on option IDs
   price: decimal("price", { precision: 10, scale: 2 }).notNull(),
   duration: integer("duration").notNull(),
 }, (table) => [
   index("idx_booking_items_booking").on(table.bookingId),
   index("idx_booking_items_service").on(table.serviceId),
-  index("idx_booking_items_variant").on(table.variantId),
 ]);
 
 // Invoices
@@ -831,7 +677,6 @@ export const insertCustomerSchema = createInsertSchema(customers).omit({ id: tru
   phone: z.string().min(10, "Phone number must be at least 10 digits").max(15, "Phone number must be at most 15 digits").optional().or(z.literal('')).nullable(),
   userId: z.string().optional().nullable(),
   gender: z.enum(["male", "female", "other", "prefer-not-to-say"]).optional().nullable(),
-  birthday: z.coerce.date().optional().nullable(),
   address: z.object({
     street: z.string().optional(),
     city: z.string().optional(),
@@ -850,7 +695,6 @@ export const insertInvoiceSchema = createInsertSchema(invoices).omit({ id: true,
 export const insertInvoiceItemSchema = createInsertSchema(invoiceItems).omit({ id: true });
 export const insertTransactionSchema = createInsertSchema(transactions).omit({ id: true });
 export const insertStaffTimeEntrySchema = createInsertSchema(staffTimeEntries).omit({ id: true, createdAt: true, updatedAt: true });
-export const insertStaffEmergencyContactSchema = createInsertSchema(staffEmergencyContacts).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertVendorSchema = createInsertSchema(vendors).omit({ id: true, createdAt: true });
 export const insertBillSchema = createInsertSchema(bills).omit({ id: true, createdAt: true });
 export const insertBillItemSchema = createInsertSchema(billItems).omit({ id: true });
@@ -881,7 +725,6 @@ export type InsertInvoice = z.infer<typeof insertInvoiceSchema>;
 export type InsertInvoiceItem = z.infer<typeof insertInvoiceItemSchema>;
 export type InsertTransaction = z.infer<typeof insertTransactionSchema>;
 export type InsertStaffTimeEntry = z.infer<typeof insertStaffTimeEntrySchema>;
-export type InsertStaffEmergencyContact = z.infer<typeof insertStaffEmergencyContactSchema>;
 export type InsertVendor = z.infer<typeof insertVendorSchema>;
 export type InsertBill = z.infer<typeof insertBillSchema>;
 export type InsertBillItem = z.infer<typeof insertBillItemSchema>;
@@ -904,7 +747,6 @@ export type CustomerMembership = typeof customerMemberships.$inferSelect;
 export type MembershipUsage = typeof membershipUsage.$inferSelect;
 export type Staff = typeof staff.$inferSelect;
 export type StaffSchedule = typeof staffSchedules.$inferSelect;
-export type StaffEmergencyContact = typeof staffEmergencyContacts.$inferSelect;
 export type Product = typeof products.$inferSelect;
 export type Customer = typeof customers.$inferSelect;
 export type Booking = typeof bookings.$inferSelect;
@@ -1098,12 +940,10 @@ export const auditLogs = pgTable("audit_logs", {
   index("idx_audit_created").on(table.createdAt),
 ]);
 
-// Third-party OAuth integrations (Google Calendar, HubSpot, Mailchimp, etc.)
+// Third-party OAuth integrations (HubSpot, Mailchimp, etc.)
 export const integrationTypes = [
-  "google_calendar",
   "google_my_business", 
   "google_analytics",
-  "google_meet",
   "hubspot_crm",
   "mailchimp",
   "wave_accounting",
@@ -1170,30 +1010,6 @@ export const webhookSubscriptions = pgTable("webhook_subscriptions", {
   index("idx_webhook_subscriptions_provider").on(table.provider, table.resource),
 ]);
 
-// Marketplace Features (Phase 1) - Insert schemas
-export const insertServiceVariantSchema = createInsertSchema(serviceVariants).omit({ id: true, createdAt: true, updatedAt: true });
-export const insertServiceVariantStaffPricingSchema = createInsertSchema(serviceVariantStaffPricing).omit({ id: true, createdAt: true });
-export const insertServiceAddonSchema = createInsertSchema(serviceAddons).omit({ id: true, createdAt: true, updatedAt: true });
-export const insertServiceAddonOptionSchema = createInsertSchema(serviceAddonOptions).omit({ id: true, createdAt: true, updatedAt: true });
-export const insertServiceBundleSchema = createInsertSchema(serviceBundles).omit({ id: true, createdAt: true, updatedAt: true });
-export const insertServiceBundleItemSchema = createInsertSchema(serviceBundleItems).omit({ id: true, createdAt: true });
-export const insertServiceExtraTimeSchema = createInsertSchema(serviceExtraTime).omit({ id: true, spaId: true, createdAt: true, updatedAt: true });
-
-// Marketplace Features (Phase 1) - Select types
-export type ServiceVariant = typeof serviceVariants.$inferSelect;
-export type InsertServiceVariant = z.infer<typeof insertServiceVariantSchema>;
-export type ServiceVariantStaffPricing = typeof serviceVariantStaffPricing.$inferSelect;
-export type InsertServiceVariantStaffPricing = z.infer<typeof insertServiceVariantStaffPricingSchema>;
-export type ServiceAddon = typeof serviceAddons.$inferSelect;
-export type InsertServiceAddon = z.infer<typeof insertServiceAddonSchema>;
-export type ServiceAddonOption = typeof serviceAddonOptions.$inferSelect;
-export type InsertServiceAddonOption = z.infer<typeof insertServiceAddonOptionSchema>;
-export type ServiceBundle = typeof serviceBundles.$inferSelect;
-export type InsertServiceBundle = z.infer<typeof insertServiceBundleSchema>;
-export type ServiceBundleItem = typeof serviceBundleItems.$inferSelect;
-export type InsertServiceBundleItem = z.infer<typeof insertServiceBundleItemSchema>;
-export type ServiceExtraTime = typeof serviceExtraTime.$inferSelect;
-export type InsertServiceExtraTime = z.infer<typeof insertServiceExtraTimeSchema>;
 
 // Insert schemas
 export const insertSpaNotificationSettingsSchema = createInsertSchema(spaNotificationSettings);
