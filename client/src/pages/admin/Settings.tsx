@@ -9,7 +9,11 @@ import { Building2, Mail, Phone, MapPin, DollarSign, Palette, Calendar, Link as 
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
-import type { SpaSettings, SpaIntegration, Service, ServiceExtraTime, InsertServiceExtraTime } from "@shared/schema";
+import type { SpaSettings, SpaIntegration, Service } from "@shared/schema";
+
+// Temporary types for removed ServiceExtraTime feature
+type ServiceExtraTime = any;
+type InsertServiceExtraTime = any;
 import NotificationProviderConfig from "@/components/NotificationProviderConfig";
 import NotificationSettings from "@/components/NotificationSettings";
 import { Badge } from "@/components/ui/badge";

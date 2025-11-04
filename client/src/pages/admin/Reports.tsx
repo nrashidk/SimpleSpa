@@ -390,7 +390,7 @@ export default function AdminReports() {
             <CardHeader>
               <div className="flex items-center justify-between">
                 <CardTitle>Sales by channel</CardTitle>
-                <Button variant="link" size="sm">View report</Button>
+                <Button variant="ghost" size="sm">View report</Button>
               </div>
             </CardHeader>
             <CardContent>
@@ -436,7 +436,7 @@ export default function AdminReports() {
             <CardHeader>
               <div className="flex items-center justify-between">
                 <CardTitle>Appointments</CardTitle>
-                <Button variant="link" size="sm">View report</Button>
+                <Button variant="ghost" size="sm">View report</Button>
               </div>
             </CardHeader>
             <CardContent>
@@ -499,7 +499,7 @@ export default function AdminReports() {
             <CardHeader>
               <div className="flex items-center justify-between">
                 <CardTitle>Occupancy rate</CardTitle>
-                <Button variant="link" size="sm">View report</Button>
+                <Button variant="ghost" size="sm">View report</Button>
               </div>
             </CardHeader>
             <CardContent>
@@ -558,7 +558,7 @@ export default function AdminReports() {
             <CardHeader>
               <div className="flex items-center justify-between">
                 <CardTitle>Returning client rate</CardTitle>
-                <Button variant="link" size="sm">View report</Button>
+                <Button variant="ghost" size="sm">View report</Button>
               </div>
             </CardHeader>
             <CardContent>
@@ -619,7 +619,7 @@ export default function AdminReports() {
           <CardHeader>
             <div className="flex items-center justify-between">
               <CardTitle>Top team members</CardTitle>
-              <Button variant="link" size="sm">View report</Button>
+              <Button variant="ghost" size="sm">View report</Button>
             </div>
           </CardHeader>
           <CardContent>

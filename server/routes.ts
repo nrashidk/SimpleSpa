@@ -469,7 +469,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const spaId = req.adminSpa.id;
 
-      const integrations = await storage.getSpaIntegrations(spaId);
+      const integrations = await storage.getAllIntegrations(spaId);
       
       // Return integrations with status but without encrypted tokens
       const safeIntegrations = integrations.map(int => ({
@@ -544,27 +544,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Encrypt tokens for storage
       const { encryptedTokens, tokenMetadata } = encryptTokensForStorage(tokens);
 
-      // Save integration to database
-      await storage.createOrUpdateSpaIntegration({
-        spaId,
-        integrationType,
-        provider,
-        encryptedTokens,
-        tokenMetadata,
-        status: 'active',
-        metadata: {
-          connectedAt: new Date().toISOString(),
-          connectedBy: userId,
-        },
-      });
+      // Check if integration exists
+      const existingIntegration = await storage.getIntegrationByType(spaId, integrationType);
+
+      let integration;
+      if (existingIntegration) {
+        integration = await storage.updateIntegration(existingIntegration.id, {
+          encryptedTokens,
+          tokenMetadata,
+          status: 'active',
+          metadata: {
+            connectedAt: new Date().toISOString(),
+            connectedBy: userId,
+          },
+        });
+      } else {
+        integration = await storage.createIntegration({
+          spaId,
+          integrationType,
+          encryptedTokens,
+          tokenMetadata,
+          status: 'active',
+          metadata: {
+            connectedAt: new Date().toISOString(),
+            connectedBy: userId,
+          },
+        } as any);
+      }
 
       // Log the integration
       await AuditLogger.log({
         userId,
-        action: 'integration_connected',
-        entityType: 'spa_integration',
-        entityId: spaId.toString(),
-        metadata: { integrationType, provider },
+        action: 'CREATE',
+        entityType: 'spa',
+        entityId: spaId,
+        after: { integrationType, connected: true },
       });
 
       // Redirect back to settings with success message
@@ -583,27 +597,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Invalid integration ID" });
       }
 
-      const integration = await storage.getSpaIntegrationById(integrationId);
+      const integration = await storage.getIntegrationById(integrationId);
       if (!integration) {
         return res.status(404).json({ message: "Integration not found" });
       }
 
       // Update status to inactive
-      await storage.updateSpaIntegration(integrationId, {
+      const userId = (req as any).user?.claims?.sub || (req as any).user?.id;
+      await storage.updateIntegration(integrationId, {
         status: 'inactive',
         metadata: {
           ...integration.metadata,
           disconnectedAt: new Date().toISOString(),
-          disconnectedBy: req.user.claims.sub,
+          disconnectedBy: userId,
         },
       });
 
       await AuditLogger.log({
-        userId: req.user.claims.sub,
-        action: 'integration_disconnected',
-        entityType: 'spa_integration',
-        entityId: integrationId.toString(),
-        metadata: { integrationType: integration.integrationType },
+        userId,
+        action: 'DELETE',
+        entityType: 'spa',
+        entityId: integration.spaId,
+        after: { integrationType: integration.integrationType, disconnected: true },
       });
 
       res.json({ success: true });
@@ -1370,11 +1385,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.post("/api/super-admin/applications/:id/approve", isSuperAdmin, async (req, res) => {
+    const id = parseNumericId(req.params.id);
+    if (!id) {
+      return res.status(400).json({ message: "Invalid application ID" });
+    }
+
     try {
-      const id = parseNumericId(req.params.id);
-      if (!id) {
-        return res.status(400).json({ message: "Invalid application ID" });
-      }
 
       const application = await storage.getAdminApplicationById(id);
       if (!application) {
@@ -2096,96 +2112,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ success: true });
     } catch (error) {
       handleRouteError(res, error, "Failed to delete service");
-    }
-  });
-
-  // Service Extra Time routes
-  app.get("/api/admin/services/:serviceId/extra-time", isAdmin, async (req, res) => {
-    try {
-      const serviceId = parseNumericId(req.params.serviceId);
-      if (!serviceId) {
-        return res.status(400).json({ message: "Invalid service ID" });
-      }
-      
-      const extraTimes = await storage.getServiceExtraTimes(serviceId);
-      res.json(extraTimes);
-    } catch (error) {
-      handleRouteError(res, error, "Failed to fetch service extra times");
-    }
-  });
-
-  app.post("/api/admin/services/:serviceId/extra-time", isAdmin, injectAdminSpa, ensureSetupComplete, async (req: any, res) => {
-    try {
-      const serviceId = parseNumericId(req.params.serviceId);
-      if (!serviceId) {
-        return res.status(400).json({ message: "Invalid service ID" });
-      }
-      
-      const validatedData = insertServiceExtraTimeSchema.parse({
-        ...req.body,
-        serviceId,
-        spaId: req.spaId,
-      });
-      
-      const extraTime = await storage.createServiceExtraTime(validatedData);
-      
-      // Log extra time creation to audit trail
-      await AuditLogger.logCreate(req, "service_extra_time", extraTime.id, extraTime, req.spaId);
-      
-      res.status(201).json(extraTime);
-    } catch (error) {
-      handleRouteError(res, error, "Failed to create service extra time");
-    }
-  });
-
-  app.put("/api/admin/extra-time/:id", isAdmin, injectAdminSpa, ensureSetupComplete, async (req: any, res) => {
-    try {
-      const id = parseNumericId(req.params.id);
-      if (!id) {
-        return res.status(400).json({ message: "Invalid extra time ID" });
-      }
-      
-      const before = await storage.getServiceExtraTimeById(id);
-      const validatedData = insertServiceExtraTimeSchema.partial().parse(req.body);
-      const extraTime = await storage.updateServiceExtraTime(id, validatedData);
-      
-      if (!extraTime) {
-        return res.status(404).json({ message: "Extra time not found" });
-      }
-      
-      // Log extra time update to audit trail
-      if (before) {
-        await AuditLogger.logUpdate(req, "service_extra_time", id, before, validatedData, extraTime.spaId);
-      }
-      
-      res.json(extraTime);
-    } catch (error) {
-      handleRouteError(res, error, "Failed to update extra time");
-    }
-  });
-
-  app.delete("/api/admin/extra-time/:id", isAdmin, injectAdminSpa, ensureSetupComplete, async (req: any, res) => {
-    try {
-      const id = parseNumericId(req.params.id);
-      if (!id) {
-        return res.status(400).json({ message: "Invalid extra time ID" });
-      }
-      
-      const extraTime = await storage.getServiceExtraTimeById(id);
-      const deleted = await storage.deleteServiceExtraTime(id);
-      
-      if (!deleted) {
-        return res.status(404).json({ message: "Extra time not found" });
-      }
-      
-      // Log extra time deletion to audit trail
-      if (extraTime) {
-        await AuditLogger.logDelete(req, "service_extra_time", id, extraTime, extraTime.spaId);
-      }
-      
-      res.json({ success: true });
-    } catch (error) {
-      handleRouteError(res, error, "Failed to delete extra time");
     }
   });
 
@@ -4210,13 +4136,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/admin/vat-report", isAdmin, async (req, res) => {
     try {
       const userId = (req as any).user.claims.sub;
-      const user = await storage.getUserById(userId);
-      if (!user || !user.spaId) {
+      const user = await storage.getUser(userId);
+      if (!user || !user.adminSpaId) {
         return res.status(403).json({ message: "Access denied: No spa assignment" });
       }
-      
+
       const { from, to, taxCode } = req.query;
-      const filters: any = { spaId: user.spaId };
+      const filters: any = { spaId: user.adminSpaId };
       
       if (from) filters.startDate = new Date(from as string);
       if (to) filters.endDate = new Date(to as string);
@@ -4235,13 +4161,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/admin/export-faf", isAdmin, async (req, res) => {
     try {
       const userId = (req as any).user.claims.sub;
-      const user = await storage.getUserById(userId);
-      if (!user || !user.spaId) {
+      const user = await storage.getUser(userId);
+      if (!user || !user.adminSpaId) {
         return res.status(403).json({ message: "Access denied: No spa assignment" });
       }
-      
+
       const { startDate, endDate } = req.body;
-      const filters: any = { spaId: user.spaId };
+      const filters: any = { spaId: user.adminSpaId };
       
       if (startDate) filters.startDate = new Date(startDate);
       if (endDate) filters.endDate = new Date(endDate);

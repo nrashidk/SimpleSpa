@@ -183,6 +183,7 @@ export interface IStorage {
 
   // Staff operations
   getAllStaff(): Promise<Staff[]>;
+  getStaffBySpaId(spaId: number): Promise<Staff[]>;
   getStaffById(id: number): Promise<Staff | undefined>;
   getStaffByEmail(email: string): Promise<Staff | undefined>;
   createStaff(staff: InsertStaff): Promise<Staff>;
@@ -861,6 +862,10 @@ export class DatabaseStorage implements IStorage {
   // Staff operations
   async getAllStaff(): Promise<Staff[]> {
     return db.select().from(staff).orderBy(staff.name);
+  }
+
+  async getStaffBySpaId(spaId: number): Promise<Staff[]> {
+    return db.select().from(staff).where(eq(staff.spaId, spaId)).orderBy(staff.name);
   }
 
   async getStaffById(id: number): Promise<Staff | undefined> {

@@ -623,14 +623,14 @@ export default function AdminServices() {
       name: membership.name,
       description: membership.description || "",
       sessionType: membership.sessionType as "limited" | "unlimited",
-      sessionCount: membership.sessionCount?.toString() || "10",
+      sessionCount: membership.numberOfSessions?.toString() || "10",
       paymentType: membership.paymentType as "one_time" | "recurring",
-      validityMonths: membership.validityMonths?.toString() || "12",
+      validityMonths: membership.validForMonths?.toString() || "12",
       price: membership.price.toString(),
       color: membership.color || "#10b981",
-      onlineSales: membership.onlineSales ?? true,
-      onlineRedemption: membership.onlineRedemption ?? true,
-      termsConditions: membership.termsConditions || "",
+      onlineSales: membership.enableOnlineSales ?? true,
+      onlineRedemption: membership.enableOnlineRedemption ?? true,
+      termsConditions: membership.termsAndConditions || "",
       selectedServiceIds: [],
     });
     setEditingMembership(membership);
@@ -1258,7 +1258,7 @@ export default function AdminServices() {
                       )}
                       <div className="flex items-center gap-4 text-sm">
                         <span className="text-muted-foreground">
-                          {membership.sessionType === "unlimited" ? "Unlimited" : `${membership.sessionCount} sessions`}
+                          {membership.sessionType === "unlimited" ? "Unlimited" : `${membership.numberOfSessions} sessions`}
                         </span>
                         <span className="text-muted-foreground">•</span>
                         <span className="text-muted-foreground">
@@ -1266,7 +1266,7 @@ export default function AdminServices() {
                         </span>
                         <span className="text-muted-foreground">•</span>
                         <span className="text-muted-foreground">
-                          Valid for {membership.validityMonths} months
+                          Valid for {membership.validForMonths} months
                         </span>
                         <span className="text-muted-foreground">•</span>
                         <span className="font-semibold">
