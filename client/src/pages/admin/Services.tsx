@@ -1323,7 +1323,7 @@ export default function AdminServices() {
     return (
       <div className="text-center py-12 text-muted-foreground">
         <Package className="h-12 w-12 mx-auto mb-3 opacity-50" />
-        <p>{selectedSection.replace("-", " ")} coming soon</p>
+        <p>Select a section from the menu</p>
       </div>
     );
   };

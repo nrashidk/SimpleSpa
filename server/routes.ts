@@ -1007,9 +1007,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
                     const notificationService = (await import('./notificationService')).default;
                     await notificationService.sendNotification(
                       spaId,
-                      'vat_threshold_reminder',
+                      'reminder',
                       { email: spaOwner.email },
-                      null,
+                      undefined,
                       templateData
                     ).catch((err: Error) => {
                       console.error('Error sending VAT threshold notification:', err);
@@ -1586,7 +1586,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.json({
           spaId: null,
           setupComplete: false,
-          userEmail: user.email, // Include user email for pre-filling contact email
+          userEmail: user?.email, // Include user email for pre-filling contact email
           steps: {
             basicInfo: false,
             location: false,
@@ -3175,7 +3175,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Audit log
-      await AuditLogger.log(req, 'CUSTOMER_BLOCK', {
+      await AuditLogger.logAction(req, 'BLOCK', 'customer', id, {
         customerId: id,
         reason,
         customerName: customer.name,
@@ -3201,7 +3201,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Audit log
-      await AuditLogger.log(req, 'CUSTOMER_UNBLOCK', {
+      await AuditLogger.logAction(req, 'UNBLOCK', 'customer', id, {
         customerId: id,
         customerName: customer.name,
       });
@@ -3232,7 +3232,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Audit log
-      await AuditLogger.log(req, 'CUSTOMER_MERGE', {
+      await AuditLogger.logAction(req, 'MERGE', 'customer', primaryId, {
         primaryId,
         duplicateId,
         resultCustomerName: customer.name,
@@ -3278,7 +3278,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const user = req.user as any;
-      const spaId = req.adminSpa.id;
+      const spaId = (req as any).adminSpa?.id;
 
       const transaction = await storage.addWalletCredit(
         customerId,
@@ -3291,8 +3291,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       );
 
       // Audit log
-      await AuditLogger.log(req, 'WALLET_CREDIT_ADD', {
-        customerId,
+      await AuditLogger.logAction(req, 'CREATE', 'customer', customerId, {
+        action: 'wallet_credit_add',
         amount,
         description,
         newBalance: transaction.balanceAfter,
@@ -3323,7 +3323,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const user = req.user as any;
-      const spaId = req.adminSpa.id;
+      const spaId = (req as any).adminSpa?.id;
 
       const transaction = await storage.deductWalletCredit(
         customerId,
@@ -3336,8 +3336,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       );
 
       // Audit log
-      await AuditLogger.log(req, 'WALLET_CREDIT_DEDUCT', {
-        customerId,
+      await AuditLogger.logAction(req, 'UPDATE', 'customer', customerId, {
+        action: 'wallet_credit_deduct',
         amount,
         description,
         newBalance: transaction.balanceAfter,
@@ -3445,7 +3445,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Audit log
-      await AuditLogger.log(req, 'CUSTOMERS_IMPORT', {
+      await AuditLogger.logAction(req, 'IMPORT', 'customer', 0, {
         total: results.total,
         imported: results.imported,
         skipped: results.skipped,

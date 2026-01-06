@@ -15,7 +15,7 @@ export interface AmendmentLogData {
   recordId: number;
   previous?: any;
   current?: any;
-  amendedBy?: number;
+  amendedBy?: string;
   amendedByName?: string;
   ipAddress?: string;
   userAgent?: string;

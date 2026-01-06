@@ -2,7 +2,7 @@ import { Request } from "express";
 import { db } from "./db";
 import { auditLogs, InsertAuditLog } from "@shared/schema";
 
-export type AuditAction = "CREATE" | "UPDATE" | "DELETE" | "LOGIN" | "LOGOUT" | "APPROVAL" | "REJECTION";
+export type AuditAction = "CREATE" | "UPDATE" | "DELETE" | "LOGIN" | "LOGOUT" | "APPROVAL" | "REJECTION" | "BLOCK" | "UNBLOCK" | "MERGE" | "IMPORT";
 export type AuditEntityType = "booking" | "invoice" | "service" | "membership" | "customer_membership" | "staff" | "staff_emergency_contact" | "staff_timesheet" | "customer" | "spa" | "product" | "loyalty_card" | "expense" | "vendor" | "service_variant" | "variant_staff_pricing" | "service_addon" | "addon_option" | "service_bundle" | "bundle_item" | "service_extra_time" | "notification_provider";
 
 interface AuditLogData {
@@ -159,6 +159,33 @@ export class AuditLogger {
       entityId: 0,
       ipAddress: this.getIpAddress(req),
       userAgent: req.get("user-agent"),
+      role,
+    });
+  }
+
+  /**
+   * Log a generic action (block, unblock, merge, import, etc.)
+   */
+  static async logAction(
+    req: Request,
+    action: AuditAction,
+    entityType: AuditEntityType,
+    entityId: number,
+    data?: any,
+    spaId?: number
+  ): Promise<void> {
+    const userId = this.getUserId(req);
+    const role = await this.getUserRole(userId);
+
+    await this.log({
+      userId,
+      action,
+      entityType,
+      entityId,
+      changes: data ? { after: data } : undefined,
+      ipAddress: this.getIpAddress(req),
+      userAgent: req.get("user-agent"),
+      spaId,
       role,
     });
   }

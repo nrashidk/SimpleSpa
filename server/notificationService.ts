@@ -924,3 +924,4 @@ export class NotificationService {
 
 // Export singleton instance
 export const notificationService = new NotificationService();
+export default notificationService;

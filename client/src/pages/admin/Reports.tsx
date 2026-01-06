@@ -74,7 +74,7 @@ export default function AdminReports() {
     const staffCompletedBookings = staffBookings.filter((b: any) => b.status === "completed").length;
     
     // Calculate returning clients for this staff member
-    const staffCustomers = [...new Set(staffBookings.map((b: any) => b.customerId))];
+    const staffCustomers = Array.from(new Set(staffBookings.map((b: any) => b.customerId)));
     const staffReturningCustomers = staffCustomers.filter((custId: number) => {
       const custBookingsWithStaff = staffBookings.filter((b: any) => b.customerId === custId);
       return custBookingsWithStaff.length > 1;
@@ -817,7 +817,7 @@ export default function AdminReports() {
                           </div>
                         </div>
                         <Button variant="ghost" size="icon" data-testid={`button-favourite-report-${index}`}>
-                          <Star className={`h-4 w-4 ${report.favorited ? "fill-yellow-400 text-yellow-400" : ""}`} />
+                          <Star className="h-4 w-4" />
                         </Button>
                       </div>
                     </CardContent>

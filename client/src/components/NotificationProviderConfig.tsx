@@ -79,8 +79,9 @@ export default function NotificationProviderConfig() {
   });
 
   // Save provider configuration
+  // Note: spaId is automatically injected by the backend from the authenticated admin user
   const saveMutation = useMutation({
-    mutationFn: async (data: { spaId: number; provider: Provider; channel: NotificationChannel; credentials: Record<string, string>; fromEmail?: string; fromPhone?: string }) => {
+    mutationFn: async (data: { provider: Provider; channel: NotificationChannel; credentials: Record<string, string>; fromEmail?: string; fromPhone?: string }) => {
       return await apiRequest("POST", "/api/admin/notification-providers", data);
     },
     onSuccess: () => {
