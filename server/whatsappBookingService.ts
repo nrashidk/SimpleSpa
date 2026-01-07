@@ -8,6 +8,7 @@ import {
   staff,
   spas,
   bookings,
+  customerReviews,
   type WhatsappConversation,
   type WhatsappConversationState,
 } from "@shared/schema";
@@ -30,6 +31,7 @@ interface ConversationContext {
   totalAmount?: number;
   totalDuration?: number;
   bookingId?: number;
+  reviewRating?: number;
 }
 
 interface TwilioInboundMessage {
@@ -63,6 +65,12 @@ class WhatsAppBookingService {
       return await this.sendWelcomeMessage(phoneNumber, conversation);
     }
 
+    const idleStates = ['welcome', 'completed', 'review_completed'];
+    if ((messageBody === 'rate' || messageBody === 'review' || messageBody === 'feedback') && 
+        idleStates.includes(conversation.state)) {
+      return await this.startOptInReview(phoneNumber, conversation);
+    }
+
     const input = buttonPayload || messageBody;
     
     switch (conversation.state) {
@@ -87,7 +95,29 @@ class WhatsAppBookingService {
       case 'payment':
         return await this.handlePayment(phoneNumber, conversation, input);
       case 'completed':
+        if (messageBody === 'hi' || messageBody === 'hello' || messageBody === 'book' || messageBody === 'hey') {
+          conversation = await this.resetConversation(conversation.id);
+          return await this.sendWelcomeMessage(phoneNumber, conversation);
+        }
         return await this.sendCompletedMessage(phoneNumber, conversation);
+      case 'review_rating':
+        if (messageBody === 'skip' || messageBody === 'book' || messageBody === 'later') {
+          conversation = await this.resetConversation(conversation.id);
+          return await this.sendWelcomeMessage(phoneNumber, conversation);
+        }
+        return await this.handleReviewRating(phoneNumber, conversation, input);
+      case 'review_comment':
+        if (messageBody === 'skip' || messageBody === 'book' || messageBody === 'later') {
+          conversation = await this.resetConversation(conversation.id);
+          return await this.sendWelcomeMessage(phoneNumber, conversation);
+        }
+        return await this.handleReviewComment(phoneNumber, conversation, input);
+      case 'review_completed':
+        if (messageBody === 'book' || messageBody === 'hi' || messageBody === 'hello') {
+          conversation = await this.resetConversation(conversation.id);
+          return await this.sendWelcomeMessage(phoneNumber, conversation);
+        }
+        return await this.sendReviewCompletedMessage(phoneNumber, conversation);
       default:
         return await this.sendWelcomeMessage(phoneNumber, conversation);
     }
@@ -96,7 +126,7 @@ class WhatsAppBookingService {
   private async getOrCreateConversation(phoneNumber: string): Promise<WhatsappConversation> {
     const now = new Date();
     
-    const [existing] = await db
+    const validConversations = await db
       .select()
       .from(whatsappConversations)
       .where(
@@ -109,13 +139,19 @@ class WhatsAppBookingService {
         )
       )
       .orderBy(desc(whatsappConversations.createdAt))
-      .limit(1);
+      .limit(5);
 
-    if (existing) {
+    if (validConversations.length > 0) {
+      const bookingStates = ['select_spa', 'select_location', 'select_category', 
+        'select_service', 'select_professional', 'select_date', 'select_time', 'confirm_details', 'payment'];
+      
+      const activeBooking = validConversations.find(c => bookingStates.includes(c.state));
+      const chosen = activeBooking || validConversations[0];
+      
       const [updated] = await db
         .update(whatsappConversations)
         .set({ lastMessageAt: now, updatedAt: now })
-        .where(eq(whatsappConversations.id, existing.id))
+        .where(eq(whatsappConversations.id, chosen.id))
         .returning();
       return updated;
     }
@@ -647,6 +683,7 @@ class WhatsAppBookingService {
         totalAmount: String(context.totalAmount || 0),
         status: 'confirmed',
         notes: `WhatsApp Booking | Location: ${context.locationType === 'home' ? 'Home Service' : 'At Spa'} | Services: ${context.selectedServices?.map(s => s.name).join(', ')}`,
+        conversationId: conversation.id,
       })
       .returning();
 
@@ -790,6 +827,438 @@ class WhatsAppBookingService {
 
   async sendDirectMessage(phoneNumber: string, message: string): Promise<void> {
     await this.sendMessage(phoneNumber, message);
+  }
+
+  async startReviewFlow(bookingId: number): Promise<boolean> {
+    const [booking] = await db
+      .select({
+        id: bookings.id,
+        customerId: bookings.customerId,
+        spaId: bookings.spaId,
+        staffId: bookings.staffId,
+        status: bookings.status,
+        conversationId: bookings.conversationId,
+      })
+      .from(bookings)
+      .where(eq(bookings.id, bookingId));
+
+    if (!booking?.customerId) return false;
+    
+    if (booking.status !== 'completed') {
+      console.log(`[Review] Booking #${bookingId} not completed (status: ${booking.status}), skipping review`);
+      return false;
+    }
+
+    const [customer] = await db
+      .select({ phone: customers.phone })
+      .from(customers)
+      .where(eq(customers.id, booking.customerId));
+
+    if (!customer?.phone) return false;
+
+    const [spa] = await db
+      .select({ name: spas.name })
+      .from(spas)
+      .where(eq(spas.id, booking.spaId!));
+
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+
+    if (booking.conversationId) {
+      const [originalConversation] = await db
+        .select()
+        .from(whatsappConversations)
+        .where(eq(whatsappConversations.id, booking.conversationId));
+
+      if (originalConversation) {
+        const convContext = originalConversation.context as ConversationContext || {};
+        const convState = originalConversation.state;
+        
+        const midBookingStates = ['select_spa', 'select_location', 'select_category', 
+          'select_service', 'select_professional', 'select_date', 'select_time', 'confirm_details', 'payment'];
+        
+        const isInUseForDifferentBooking = midBookingStates.includes(convState) || 
+          (convContext.bookingId && convContext.bookingId !== booking.id);
+        
+        if (isInUseForDifferentBooking) {
+          console.log(`[Review] Conversation #${booking.conversationId} busy with different booking, deferring review for booking #${booking.id}`);
+          return false;
+        }
+
+        await db
+          .update(whatsappConversations)
+          .set({
+            state: 'review_rating',
+            context: { 
+              bookingId: booking.id, 
+              spaId: booking.spaId,
+              spaName: spa?.name || 'our spa',
+              selectedStaffId: booking.staffId,
+            },
+            expiresAt,
+            updatedAt: now,
+          })
+          .where(eq(whatsappConversations.id, booking.conversationId));
+
+        const message = `Hi! Thank you for visiting ${spa?.name || 'us'} today. We'd love to hear about your experience!
+
+Please rate your visit from 1-5 stars:
+1 = Poor
+2 = Fair
+3 = Good
+4 = Very Good
+5 = Excellent
+
+Reply with a number (1-5), or type "skip" to book a new appointment instead.`;
+
+        await this.sendMessage(customer.phone, message);
+        await this.logMessage(booking.conversationId, 'outbound', 'text', message);
+        return true;
+      }
+    }
+
+    const existingConversations = await db
+      .select()
+      .from(whatsappConversations)
+      .where(eq(whatsappConversations.phoneNumber, customer.phone))
+      .orderBy(desc(whatsappConversations.createdAt))
+      .limit(1);
+
+    if (existingConversations.length > 0) {
+      const existing = existingConversations[0];
+      const existingContext = existing.context as ConversationContext || {};
+      const midBookingStates = ['select_spa', 'select_location', 'select_category', 
+        'select_service', 'select_professional', 'select_date', 'select_time', 'confirm_details', 'payment'];
+      
+      if (midBookingStates.includes(existing.state) || 
+          (existingContext.bookingId && existingContext.bookingId !== booking.id)) {
+        console.log(`[Review] Existing conversation busy, deferring review for booking #${booking.id}`);
+        return false;
+      }
+      
+      await db
+        .update(whatsappConversations)
+        .set({
+          state: 'review_rating',
+          context: { 
+            bookingId: booking.id, 
+            spaId: booking.spaId,
+            spaName: spa?.name || 'our spa',
+            selectedStaffId: booking.staffId,
+          },
+          expiresAt,
+          updatedAt: now,
+        })
+        .where(eq(whatsappConversations.id, existing.id));
+
+      const message = `Hi! Thank you for visiting ${spa?.name || 'us'} today. We'd love to hear about your experience!
+
+Please rate your visit from 1-5 stars:
+1 = Poor
+2 = Fair
+3 = Good
+4 = Very Good
+5 = Excellent
+
+Reply with a number (1-5), or type "skip" to book a new appointment instead.`;
+
+      await this.sendMessage(customer.phone, message);
+      await this.logMessage(existing.id, 'outbound', 'text', message);
+      return true;
+    }
+
+    const [conversation] = await db
+      .insert(whatsappConversations)
+      .values({
+        phoneNumber: customer.phone,
+        spaId: booking.spaId,
+        customerId: booking.customerId,
+        state: 'review_rating',
+        context: { 
+          bookingId: booking.id, 
+          spaId: booking.spaId,
+          spaName: spa?.name || 'our spa',
+          selectedStaffId: booking.staffId,
+        },
+        expiresAt,
+      })
+      .returning();
+
+    const message = `Hi! Thank you for visiting ${spa?.name || 'us'} today. We'd love to hear about your experience!
+
+Please rate your visit from 1-5 stars:
+1 = Poor
+2 = Fair
+3 = Good
+4 = Very Good
+5 = Excellent
+
+Reply with a number (1-5), or type "skip" to book a new appointment instead.`;
+
+    await this.sendMessage(customer.phone, message);
+    await this.logMessage(conversation.id, 'outbound', 'text', message);
+    return true;
+  }
+
+  private async handleReviewRating(
+    phoneNumber: string,
+    conversation: WhatsappConversation,
+    input: string
+  ): Promise<string> {
+    const rating = parseInt(input, 10);
+    
+    if (isNaN(rating) || rating < 1 || rating > 5) {
+      const message = "Please reply with a number from 1 to 5 to rate your experience.";
+      await this.sendMessage(phoneNumber, message);
+      return message;
+    }
+
+    const context = (conversation.context as ConversationContext) || {};
+    context.reviewRating = rating;
+
+    await db
+      .update(whatsappConversations)
+      .set({
+        state: 'review_comment',
+        context,
+        updatedAt: new Date(),
+      })
+      .where(eq(whatsappConversations.id, conversation.id));
+
+    const stars = '⭐'.repeat(rating);
+    const message = `Thank you for your ${rating}-star rating! ${stars}
+
+Would you like to leave a comment about your experience? (This helps us improve!)
+
+Reply with your comment, or type "skip" to finish.`;
+
+    await this.sendMessage(phoneNumber, message);
+    await this.logMessage(conversation.id, 'outbound', 'text', message);
+    return message;
+  }
+
+  private async handleReviewComment(
+    phoneNumber: string,
+    conversation: WhatsappConversation,
+    input: string
+  ): Promise<string> {
+    const context = (conversation.context as ConversationContext) || {};
+    const comment = input.toLowerCase() === 'skip' ? null : input;
+
+    const existingReview = await db
+      .select({ id: customerReviews.id })
+      .from(customerReviews)
+      .where(eq(customerReviews.bookingId, context.bookingId!))
+      .limit(1);
+
+    if (existingReview.length === 0) {
+      await db.insert(customerReviews).values({
+        spaId: context.spaId!,
+        customerId: conversation.customerId!,
+        bookingId: context.bookingId!,
+        rating: context.reviewRating!,
+        comment: comment,
+        staffId: context.selectedStaffId,
+        source: 'whatsapp',
+        isPublic: true,
+      });
+    }
+    
+    const message = `Thank you so much for your feedback! We truly appreciate you taking the time to share your experience with ${context.spaName || 'us'}.
+
+We look forward to seeing you again soon! 💆‍♀️
+
+Reply "hi" to book your next appointment.`;
+
+    await db
+      .update(whatsappConversations)
+      .set({
+        state: 'welcome',
+        context: {},
+        updatedAt: new Date(),
+      })
+      .where(eq(whatsappConversations.id, conversation.id));
+
+    await this.sendMessage(phoneNumber, message);
+    await this.logMessage(conversation.id, 'outbound', 'text', message);
+    return message;
+  }
+
+  private async sendReviewCompletedMessage(
+    phoneNumber: string,
+    conversation: WhatsappConversation
+  ): Promise<string> {
+    const context = (conversation.context as ConversationContext) || {};
+    
+    const message = `Thank you for your review! Reply "hi" to book your next appointment.`;
+
+    await this.sendMessage(phoneNumber, message);
+    await this.logMessage(conversation.id, 'outbound', 'text', message);
+    return message;
+  }
+
+  async sendIdleGatedReviewPrompt(bookingId: number): Promise<boolean> {
+    const [booking] = await db
+      .select({
+        id: bookings.id,
+        customerId: bookings.customerId,
+        spaId: bookings.spaId,
+        staffId: bookings.staffId,
+        status: bookings.status,
+      })
+      .from(bookings)
+      .where(eq(bookings.id, bookingId));
+
+    if (!booking?.customerId) return false;
+    
+    if (booking.status !== 'completed') {
+      console.log(`[Review] Booking #${bookingId} not completed, skipping`);
+      return false;
+    }
+
+    const [customer] = await db
+      .select({ phone: customers.phone })
+      .from(customers)
+      .where(eq(customers.id, booking.customerId));
+
+    if (!customer?.phone) return false;
+
+    const [spa] = await db
+      .select({ name: spas.name })
+      .from(spas)
+      .where(eq(spas.id, booking.spaId!));
+
+    const conversations = await db
+      .select()
+      .from(whatsappConversations)
+      .where(eq(whatsappConversations.phoneNumber, customer.phone))
+      .orderBy(desc(whatsappConversations.createdAt))
+      .limit(1);
+
+    const conversation = conversations[0];
+    if (!conversation) {
+      console.log(`[Review] No conversation found for ${customer.phone}, skipping`);
+      return false;
+    }
+
+    const idleStates = ['welcome', 'completed', 'review_completed'];
+    if (!idleStates.includes(conversation.state)) {
+      console.log(`[Review] Conversation busy (state: ${conversation.state}), deferring review for booking #${bookingId}`);
+      return false;
+    }
+
+    const convContext = conversation.context as ConversationContext || {};
+    const midBookingStates = ['select_spa', 'select_location', 'select_category', 
+      'select_service', 'select_professional', 'select_date', 'select_time', 'confirm_details', 'payment'];
+    if (convContext.bookingId && convContext.bookingId !== bookingId && midBookingStates.includes(conversation.state)) {
+      console.log(`[Review] Conversation has active booking, deferring`);
+      return false;
+    }
+
+    await db
+      .update(whatsappConversations)
+      .set({
+        state: 'review_rating',
+        context: {
+          bookingId: booking.id,
+          spaId: booking.spaId,
+          spaName: spa?.name || 'our spa',
+          selectedStaffId: booking.staffId,
+        },
+        updatedAt: new Date(),
+      })
+      .where(eq(whatsappConversations.id, conversation.id));
+
+    const message = `Hi! Thank you for visiting ${spa?.name || 'us'}! We'd love to hear about your experience.
+
+Please rate your visit from 1-5 stars:
+1 = Poor
+2 = Fair  
+3 = Good
+4 = Very Good
+5 = Excellent
+
+Reply with a number (1-5), or type "skip" to book a new appointment instead.`;
+
+    await this.sendMessage(customer.phone, message);
+    await this.logMessage(conversation.id, 'outbound', 'text', message);
+    return true;
+  }
+
+  private async startOptInReview(
+    phoneNumber: string,
+    conversation: WhatsappConversation
+  ): Promise<string> {
+    const [customer] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.phone, phoneNumber))
+      .limit(1);
+
+    if (!customer) {
+      const message = "You don't have any recent appointments to review. Reply 'hi' to book an appointment!";
+      await this.sendMessage(phoneNumber, message);
+      return message;
+    }
+
+    const [recentBooking] = await db
+      .select({
+        id: bookings.id,
+        spaId: bookings.spaId,
+        staffId: bookings.staffId,
+        bookingDate: bookings.bookingDate,
+      })
+      .from(bookings)
+      .leftJoin(customerReviews, eq(customerReviews.bookingId, bookings.id))
+      .where(
+        and(
+          eq(bookings.customerId, customer.id),
+          eq(bookings.status, 'completed'),
+          isNull(customerReviews.id)
+        )
+      )
+      .orderBy(desc(bookings.bookingDate))
+      .limit(1);
+
+    if (!recentBooking) {
+      const message = "You don't have any recent appointments to review, or you've already rated them. Reply 'hi' to book a new appointment!";
+      await this.sendMessage(phoneNumber, message);
+      return message;
+    }
+
+    const [spa] = await db
+      .select({ name: spas.name })
+      .from(spas)
+      .where(eq(spas.id, recentBooking.spaId!));
+
+    await db
+      .update(whatsappConversations)
+      .set({
+        state: 'review_rating',
+        context: {
+          bookingId: recentBooking.id,
+          spaId: recentBooking.spaId,
+          spaName: spa?.name || 'our spa',
+          selectedStaffId: recentBooking.staffId,
+        },
+        updatedAt: new Date(),
+      })
+      .where(eq(whatsappConversations.id, conversation.id));
+
+    const message = `Thank you for choosing to share your feedback about ${spa?.name || 'our spa'}!
+
+Please rate your visit from 1-5 stars:
+1 = Poor
+2 = Fair
+3 = Good
+4 = Very Good
+5 = Excellent
+
+Reply with a number (1-5), or type "skip" to go back to booking.`;
+
+    await this.sendMessage(phoneNumber, message);
+    await this.logMessage(conversation.id, 'outbound', 'text', message);
+    return message;
   }
 }
 

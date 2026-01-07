@@ -42,6 +42,24 @@ The backend utilizes a PostgreSQL database and an Express-based REST API.
     - **CSV Import/Export:** Bulk operations using standards-compliant CSV parsing (csv-parse/csv-stringify) that handles quoted fields, escaped delimiters, UTF-8, and embedded newlines. Import includes duplicate detection and error reporting.
 -   **Team Management System:**
     - **Advanced Timesheet System:** Enhanced time tracking with breaks, overtime calculation (>8 hours = overtime), GPS location verification for clock in/out, approval workflow (pending/approved/rejected/disputed states), manual entry support, and comprehensive audit trail. Includes staff-facing clock in/out endpoints and admin approval/rejection workflows.
+-   **WhatsApp Booking System:**
+    - **Conversational Booking Flow:** 8-step state machine (welcome → location → category → service → professional → date → time → confirm → payment) enabling customers to book services entirely via WhatsApp.
+    - **Interactive Messages:** Uses Twilio's WhatsApp API with interactive buttons and list selections for seamless navigation through booking options.
+    - **Stripe Payment Integration:** Generates Stripe checkout links for online payment with graceful fallback to venue payment when Stripe is unavailable.
+    - **Webhook Handlers:** Stripe webhook (registered before express.json for raw body access) updates booking status and triggers payment confirmations.
+    - **Lifecycle Notifications:** Automated WhatsApp notifications for booking confirmation, reminders (24h before), completion/review requests, cancellations, reschedules, and payment confirmations.
+    - **Review Collection System:** Non-blocking, idle-gated review system:
+      - Scheduler checks all completed bookings without reviewRequestedAt (unlimited retry window)
+      - sendIdleGatedReviewPrompt only triggers when conversation is idle (welcome/completed/review_completed states)
+      - If conversation busy, sends thank-you message (once only, tracked by completionMessageSentAt) with opt-in instruction
+      - Skip controls: "skip"/"book"/"later" keywords exit review to booking flow
+      - Manual opt-in: "rate"/"review"/"feedback" keywords (only in idle states) start review for most recent unreviewed booking
+      - Reviews stored in customer_reviews table with 1-5 star ratings and optional comments
+    - **Appointment Scheduler:** node-cron based scheduler runs hourly:
+      - Reminders: 24h before confirmed bookings
+      - Reviews: All completed bookings without reviewRequestedAt (idle-gated, with retry on busy)
+    - **Session Management:** Conversations expire after 24 hours, with fresh context creation for each booking session.
+    - **Booking Priority Routing:** getOrCreateConversation prioritizes active booking states to ensure reviews never hijack in-progress bookings.
 
 ## External Dependencies
 -   **Replit Auth:** User authentication and authorization.
@@ -53,5 +71,7 @@ The backend utilizes a PostgreSQL database and an Express-based REST API.
 -   **Shadcn components & Tailwind CSS:** UI framework.
 -   **date-fns:** Date utilities.
 -   **React Hook Form & Zod:** Form validation.
--   **Twilio:** Optional notification provider.
+-   **Twilio:** Optional notification provider (SMS, WhatsApp).
 -   **MSG91:** Optional notification provider.
+-   **Stripe:** Payment processing for online bookings.
+-   **node-cron:** Scheduled task management for reminders and review requests.

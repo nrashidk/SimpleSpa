@@ -157,39 +157,37 @@ We look forward to seeing you! Reply "confirm" to confirm or "reschedule" if you
   }
 }
 
-export async function sendBookingCompletion(bookingId: number): Promise<boolean> {
+export async function sendBookingCompletion(bookingId: number, thankYouAlreadySent: boolean = false): Promise<{ reviewSent: boolean; thankYouSent: boolean }> {
   const details = await getBookingDetails(bookingId);
   if (!details || !details.customerPhone) {
     console.log(`Cannot send completion message for booking ${bookingId}: no customer phone`);
-    return false;
+    return { reviewSent: false, thankYouSent: false };
   }
 
-  const message = `🙏 *Thank You for Visiting!*
-
-Hi ${details.customerName.split(' ')[0]}! We hope you enjoyed your visit to ${details.spaName}.
-
-📋 Booking #${details.bookingId}
-*Services:*
-${details.services.map(s => `• ${s}`).join('\n')}
-
-We'd love to hear your feedback! Reply with a rating from 1-5 stars:
-⭐ - Poor
-⭐⭐ - Fair
-⭐⭐⭐ - Good
-⭐⭐⭐⭐ - Very Good
-⭐⭐⭐⭐⭐ - Excellent
-
-Or simply reply with a number (1-5).
-
-Thank you for choosing ${details.spaName}! Book again anytime by replying "book".`;
-
   try {
-    await whatsappBookingService.sendDirectMessage(details.customerPhone, message);
-    console.log(`📱 Completion message sent for booking #${bookingId}`);
-    return true;
+    const sent = await whatsappBookingService.sendIdleGatedReviewPrompt(bookingId);
+    if (sent) {
+      console.log(`📱 Review prompt sent for booking #${bookingId}`);
+      return { reviewSent: true, thankYouSent: true };
+    } else {
+      if (!thankYouAlreadySent) {
+        const thankYouMessage = `✨ *Thank you for visiting ${details.spaName}!*
+
+We hope you enjoyed your experience. When you have a moment, reply "rate" to share your feedback.
+
+Reply "hi" anytime to book your next appointment! 💆‍♀️`;
+        
+        await whatsappBookingService.sendDirectMessage(details.customerPhone, thankYouMessage);
+        console.log(`📱 Thank-you sent for booking #${bookingId} (review deferred)`);
+        return { reviewSent: false, thankYouSent: true };
+      } else {
+        console.log(`⏸️ Review deferred for booking #${bookingId} (thank-you already sent)`);
+        return { reviewSent: false, thankYouSent: false };
+      }
+    }
   } catch (error) {
     console.error(`Failed to send completion message for booking #${bookingId}:`, error);
-    return false;
+    return { reviewSent: false, thankYouSent: false };
   }
 }
 

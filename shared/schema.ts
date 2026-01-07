@@ -380,6 +380,10 @@ export const bookings = pgTable("bookings", {
   discountAmount: decimal("discount_amount", { precision: 10, scale: 2 }).default("0.00"), // calculated discount amount
   notes: text("notes"),
   notificationSent: boolean("notification_sent").default(false),
+  reminderSentAt: timestamp("reminder_sent_at"),
+  reviewRequestedAt: timestamp("review_requested_at"),
+  completionMessageSentAt: timestamp("completion_message_sent_at"),
+  conversationId: integer("conversation_id").references(() => whatsappConversations.id),
   cancelledAt: timestamp("cancelled_at"),
   cancellationReason: text("cancellation_reason"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -650,6 +654,27 @@ export const backupLogs = pgTable("backup_logs", {
   index("idx_backup_status").on(table.status),
 ]);
 
+// Customer Reviews
+export const customerReviews = pgTable("customer_reviews", {
+  id: serial("id").primaryKey(),
+  spaId: integer("spa_id").references(() => spas.id).notNull(),
+  customerId: integer("customer_id").references(() => customers.id).notNull(),
+  bookingId: integer("booking_id").references(() => bookings.id),
+  rating: integer("rating").notNull(), // 1-5 stars
+  comment: text("comment"),
+  staffId: integer("staff_id").references(() => staff.id), // optional staff rating
+  source: text("source").default("whatsapp"), // whatsapp, web, app
+  isPublic: boolean("is_public").default(true),
+  adminResponse: text("admin_response"),
+  adminRespondedAt: timestamp("admin_responded_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => [
+  index("idx_reviews_spa").on(table.spaId),
+  index("idx_reviews_customer").on(table.customerId),
+  index("idx_reviews_booking").on(table.bookingId),
+  index("idx_reviews_rating").on(table.rating),
+]);
+
 // Zod schemas for validation
 export const insertSpaSchema = createInsertSchema(spas).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertSpaSettingsSchema = createInsertSchema(spaSettings).omit({ id: true, updatedAt: true });
@@ -705,6 +730,9 @@ export const insertLoyaltyCardUsageSchema = createInsertSchema(loyaltyCardUsage)
 export const insertProductSaleSchema = createInsertSchema(productSales).omit({ id: true, createdAt: true });
 export const insertAmendmentSchema = createInsertSchema(amendments).omit({ id: true, amendDate: true });
 export const insertBackupLogSchema = createInsertSchema(backupLogs).omit({ id: true, backupTime: true });
+export const insertCustomerReviewSchema = createInsertSchema(customerReviews).omit({ id: true, createdAt: true }).extend({
+  rating: z.coerce.number().int().min(1).max(5),
+});
 
 // Insert Types (for creating new records)
 export type InsertSpa = z.infer<typeof insertSpaSchema>;
@@ -735,6 +763,7 @@ export type InsertLoyaltyCardUsage = z.infer<typeof insertLoyaltyCardUsageSchema
 export type InsertProductSale = z.infer<typeof insertProductSaleSchema>;
 export type InsertAmendment = z.infer<typeof insertAmendmentSchema>;
 export type InsertBackupLog = z.infer<typeof insertBackupLogSchema>;
+export type InsertCustomerReview = z.infer<typeof insertCustomerReviewSchema>;
 
 // Select Types (for reading records)
 export type Spa = typeof spas.$inferSelect;
@@ -933,6 +962,9 @@ export const whatsappConversationStates = [
   "payment",           // Stripe payment link
   "completed",         // Booking confirmed
   "cancelled",         // User cancelled
+  "review_rating",     // Ask for star rating (1-5)
+  "review_comment",    // Ask for optional comment
+  "review_completed",  // Review submitted
 ] as const;
 
 export const whatsappConversations = pgTable("whatsapp_conversations", {
