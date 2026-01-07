@@ -919,6 +919,55 @@ export const notificationUsage = pgTable("notification_usage", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
+// WhatsApp conversation sessions for booking flow
+export const whatsappConversationStates = [
+  "welcome",           // Initial greeting
+  "select_spa",        // Choose spa (if multiple)
+  "select_location",   // Choose location type (at spa or home service)
+  "select_category",   // Browse service categories
+  "select_service",    // Select specific service(s)
+  "select_professional", // Choose staff member
+  "select_date",       // Pick appointment date
+  "select_time",       // Pick time slot
+  "confirm_details",   // Review and confirm
+  "payment",           // Stripe payment link
+  "completed",         // Booking confirmed
+  "cancelled",         // User cancelled
+] as const;
+
+export const whatsappConversations = pgTable("whatsapp_conversations", {
+  id: serial("id").primaryKey(),
+  phoneNumber: text("phone_number").notNull(), // Customer's WhatsApp number
+  spaId: integer("spa_id").references(() => spas.id), // May be null initially
+  customerId: integer("customer_id").references(() => customers.id), // Linked customer if exists
+  state: text("state").notNull().default("welcome"), // Current conversation state
+  context: jsonb("context").default(sql`'{}'::jsonb`), // Booking context data
+  lastMessageAt: timestamp("last_message_at").defaultNow().notNull(),
+  expiresAt: timestamp("expires_at"), // Session expiry (24 hours)
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => [
+  index("idx_whatsapp_phone").on(table.phoneNumber),
+  index("idx_whatsapp_spa").on(table.spaId),
+  index("idx_whatsapp_state").on(table.state),
+  index("idx_whatsapp_expires").on(table.expiresAt),
+]);
+
+// WhatsApp message log for debugging and analytics
+export const whatsappMessages = pgTable("whatsapp_messages", {
+  id: serial("id").primaryKey(),
+  conversationId: integer("conversation_id").references(() => whatsappConversations.id).notNull(),
+  direction: text("direction").notNull(), // inbound, outbound
+  messageType: text("message_type").notNull(), // text, interactive, template
+  content: text("content").notNull(),
+  twilioSid: text("twilio_sid"), // Twilio message SID
+  status: text("status").default("sent"), // sent, delivered, read, failed
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => [
+  index("idx_whatsapp_msg_conv").on(table.conversationId),
+  index("idx_whatsapp_msg_created").on(table.createdAt),
+]);
+
 // Audit logs - track all important changes for compliance and security
 export const auditLogs = pgTable("audit_logs", {
   id: serial("id").primaryKey(),
@@ -1016,6 +1065,8 @@ export const insertSpaNotificationSettingsSchema = createInsertSchema(spaNotific
 export const insertSpaNotificationCredentialsSchema = createInsertSchema(spaNotificationCredentials);
 export const insertNotificationEventSchema = createInsertSchema(notificationEvents);
 export const insertNotificationUsageSchema = createInsertSchema(notificationUsage);
+export const insertWhatsappConversationSchema = createInsertSchema(whatsappConversations).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertWhatsappMessageSchema = createInsertSchema(whatsappMessages).omit({ id: true, createdAt: true });
 export const insertAuditLogSchema = createInsertSchema(auditLogs).omit({ id: true, createdAt: true });
 export const insertSpaIntegrationSchema = createInsertSchema(spaIntegrations).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertIntegrationSyncLogSchema = createInsertSchema(integrationSyncLogs).omit({ id: true });
@@ -1034,3 +1085,8 @@ export type IntegrationSyncLog = typeof integrationSyncLogs.$inferSelect;
 export type InsertIntegrationSyncLog = z.infer<typeof insertIntegrationSyncLogSchema>;
 export type WebhookSubscription = typeof webhookSubscriptions.$inferSelect;
 export type InsertWebhookSubscription = z.infer<typeof insertWebhookSubscriptionSchema>;
+export type WhatsappConversation = typeof whatsappConversations.$inferSelect;
+export type InsertWhatsappConversation = z.infer<typeof insertWhatsappConversationSchema>;
+export type WhatsappMessage = typeof whatsappMessages.$inferSelect;
+export type InsertWhatsappMessage = z.infer<typeof insertWhatsappMessageSchema>;
+export type WhatsappConversationState = typeof whatsappConversationStates[number];

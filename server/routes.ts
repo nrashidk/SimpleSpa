@@ -5460,6 +5460,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
   
+  // Twilio WhatsApp inbound message webhook (for booking chatbot)
+  app.post("/api/webhooks/whatsapp/inbound", async (req, res) => {
+    try {
+      const { MessageSid, From, To, Body, ButtonPayload, ListId, ListTitle } = req.body;
+      
+      console.log(`📱 WhatsApp Inbound: From ${From} - "${Body?.substring(0, 50)}..."`);
+      
+      // Import and use the WhatsApp booking service
+      const { whatsappBookingService } = await import('./whatsappBookingService');
+      
+      // Handle the inbound message
+      const response = await whatsappBookingService.handleInboundMessage({
+        MessageSid,
+        From,
+        To,
+        Body: Body || '',
+        ButtonPayload,
+        ListId,
+        ListTitle,
+      });
+      
+      // Twilio expects TwiML response or empty 200
+      res.status(200).send('');
+    } catch (error) {
+      console.error('WhatsApp inbound webhook error:', error);
+      res.status(500).send('Error');
+    }
+  });
+
   // MSG91 delivery status webhook
   app.post("/api/webhooks/msg91", async (req, res) => {
     try {
