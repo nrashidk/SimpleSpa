@@ -62,7 +62,7 @@ The backend utilizes a PostgreSQL database and an Express-based REST API.
     - **Booking Priority Routing:** getOrCreateConversation prioritizes active booking states to ensure reviews never hijack in-progress bookings.
 
 ## External Dependencies
--   **Replit Auth:** User authentication and authorization.
+-   **Firebase Authentication:** User authentication via Google Sign-in (replaced Replit Auth on 2026-01-07).
 -   **PostgreSQL (Neon-backed):** Primary database.
 -   **Recharts:** Data visualization.
 -   **react-big-calendar:** Interactive calendar.
