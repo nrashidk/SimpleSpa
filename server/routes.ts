@@ -1,4 +1,4 @@
-import type { Express } from "express";
+import express, { type Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { setupAuth, isAuthenticated, isAdmin, isSuperAdmin, injectAdminSpa, enforceSetupWizard, ensureSetupComplete } from "./replitAuth";
@@ -5440,6 +5440,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // ==================== NOTIFICATION WEBHOOKS ====================
   
+  // Note: Stripe webhook is registered in index.ts before express.json() middleware
+  // to ensure raw body access for signature verification
+
   // Twilio delivery status webhook
   app.post("/api/webhooks/twilio", async (req, res) => {
     try {

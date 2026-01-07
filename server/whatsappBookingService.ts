@@ -13,6 +13,7 @@ import {
 } from "@shared/schema";
 import { eq, and, desc, gte, isNull, or, sql } from "drizzle-orm";
 import twilio from "twilio";
+import { createPaymentLink } from "./stripeClient";
 
 interface ConversationContext {
   spaId?: number;
@@ -28,6 +29,7 @@ interface ConversationContext {
   customerEmail?: string;
   totalAmount?: number;
   totalDuration?: number;
+  bookingId?: number;
 }
 
 interface TwilioInboundMessage {
@@ -656,15 +658,60 @@ class WhatsAppBookingService {
       })
       .where(eq(whatsappConversations.id, conversation.id));
 
-    await this.updateConversation(conversation.id, 'completed', context);
+    await this.updateConversation(conversation.id, 'payment', {
+      ...context,
+      bookingId: booking.id,
+    });
 
-    return await this.sendMessage(phoneNumber,
-      `🎉 Booking Confirmed!\n\nBooking #${booking.id}\n📅 ${context.selectedDate} at ${context.selectedTime}\n👤 ${context.selectedStaffName}\n📍 ${context.locationType === 'home' ? 'Home Service' : `At ${context.spaName}`}\n\nServices:\n${context.selectedServices?.map(s => `- ${s.name}`).join('\n')}\n\nTotal: AED ${context.totalAmount?.toFixed(0)}\n\nWe look forward to seeing you! Reply anytime to make another booking.`
-    );
+    let paymentUrl: string | null = null;
+    try {
+      paymentUrl = await createPaymentLink(
+        booking.id,
+        context.totalAmount || 0,
+        context.spaName || 'Spa',
+        context.selectedServices?.map(s => s.name) || []
+      );
+    } catch (error) {
+      console.error('Failed to create payment link:', error);
+    }
+
+    if (paymentUrl) {
+      return await this.sendMessage(phoneNumber,
+        `🎉 Booking Created!\n\nBooking #${booking.id}\n📅 ${context.selectedDate} at ${context.selectedTime}\n👤 ${context.selectedStaffName}\n📍 ${context.locationType === 'home' ? 'Home Service' : `At ${context.spaName}`}\n\nServices:\n${context.selectedServices?.map(s => `- ${s.name}`).join('\n')}\n\n💰 Total: AED ${context.totalAmount?.toFixed(0)}\n\n💳 Complete your payment here:\n${paymentUrl}\n\nOnce paid, you'll receive a confirmation message. Reply "pay later" to pay at the venue instead.`
+      );
+    } else {
+      await this.updateConversation(conversation.id, 'completed', context);
+      return await this.sendMessage(phoneNumber,
+        `🎉 Booking Confirmed!\n\nBooking #${booking.id}\n📅 ${context.selectedDate} at ${context.selectedTime}\n👤 ${context.selectedStaffName}\n📍 ${context.locationType === 'home' ? 'Home Service' : `At ${context.spaName}`}\n\nServices:\n${context.selectedServices?.map(s => `- ${s.name}`).join('\n')}\n\nTotal: AED ${context.totalAmount?.toFixed(0)}\n\nPayment will be collected at the venue. We look forward to seeing you! Reply anytime to make another booking.`
+      );
+    }
   }
 
   private async handlePayment(phoneNumber: string, conversation: WhatsappConversation, input: string): Promise<string> {
-    return await this.sendMessage(phoneNumber, "Payment processing coming soon!");
+    const context = conversation.context as ConversationContext & { bookingId?: number };
+    
+    if (input.includes('pay later') || input.includes('paylater') || input === 'later') {
+      await db
+        .update(bookings)
+        .set({ notes: sql`notes || ' | Payment: Pay at venue'` })
+        .where(eq(bookings.id, context.bookingId!));
+      
+      await this.updateConversation(conversation.id, 'completed', context);
+      
+      return await this.sendMessage(phoneNumber,
+        `✅ No problem! Your booking #${context.bookingId} is confirmed.\n\n📍 Payment will be collected at the venue.\n📅 ${context.selectedDate} at ${context.selectedTime}\n\nWe look forward to seeing you! Reply anytime to make another booking.`
+      );
+    }
+
+    if (input === 'paid' || input.includes('completed') || input.includes('done')) {
+      return await this.sendMessage(phoneNumber,
+        `Thank you! We'll verify your payment shortly and send you a confirmation. If you have any issues, please contact the spa directly.`
+      );
+    }
+
+    return await this.sendMessage(phoneNumber,
+      `Your booking #${context.bookingId} is awaiting payment.\n\n💳 Please complete your payment using the link above, or reply "pay later" to pay at the venue instead.`
+    );
   }
 
   private async sendCompletedMessage(phoneNumber: string, conversation: WhatsappConversation): Promise<string> {
@@ -739,6 +786,10 @@ class WhatsAppBookingService {
       }
     }
     return slots;
+  }
+
+  async sendDirectMessage(phoneNumber: string, message: string): Promise<void> {
+    await this.sendMessage(phoneNumber, message);
   }
 }
 

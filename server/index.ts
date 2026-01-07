@@ -7,6 +7,32 @@ import { validateEnvironment } from "./validateEnv";
 validateEnvironment();
 
 const app = express();
+
+// CRITICAL: Register Stripe webhook BEFORE express.json() middleware
+// Stripe requires raw body for signature verification
+app.post('/api/webhooks/stripe', express.raw({ type: 'application/json' }), async (req, res) => {
+  try {
+    const signature = req.headers['stripe-signature'] as string;
+    
+    if (!signature) {
+      console.log('[Stripe Webhook] Missing signature');
+      return res.status(400).json({ error: 'Missing stripe-signature header' });
+    }
+
+    const { handleStripeWebhook } = await import('./stripeWebhook');
+    const result = await handleStripeWebhook(req.body as Buffer, signature);
+    
+    if (result.success) {
+      res.status(200).json({ received: true });
+    } else {
+      res.status(400).json({ error: result.error });
+    }
+  } catch (error: any) {
+    console.error('[Stripe Webhook] Error:', error.message);
+    res.status(500).json({ error: 'Webhook processing failed' });
+  }
+});
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
