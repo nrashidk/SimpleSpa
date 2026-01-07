@@ -127,7 +127,7 @@ export default function AdminServices() {
           description: "Please log in again.",
           variant: "destructive",
         });
-        window.location.href = "/api/login";
+        window.location.href = "/";
         return;
       }
       
@@ -191,7 +191,7 @@ export default function AdminServices() {
           description: "Please log in again.",
           variant: "destructive",
         });
-        window.location.href = "/api/login";
+        window.location.href = "/";
         return;
       }
       
@@ -244,7 +244,7 @@ export default function AdminServices() {
           description: "Please log in again.",
           variant: "destructive",
         });
-        window.location.href = "/api/login";
+        window.location.href = "/";
         return;
       }
       
@@ -300,7 +300,7 @@ export default function AdminServices() {
           description: "Please log in again.",
           variant: "destructive",
         });
-        window.location.href = "/api/login";
+        window.location.href = "/";
         return;
       }
       

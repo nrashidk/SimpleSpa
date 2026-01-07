@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
+import { signInWithGoogle } from "@/lib/firebase";
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -16,11 +17,11 @@ export default function ProtectedRoute({ children, requireAdmin = false, require
     if (!isLoading && !isAuthenticated) {
       toast({
         title: "Authentication Required",
-        description: "You need to log in to access this page. Redirecting...",
+        description: "You need to log in to access this page.",
         variant: "destructive",
       });
       setTimeout(() => {
-        window.location.href = "/api/login";
+        window.location.href = "/";
       }, 500);
       return;
     }
