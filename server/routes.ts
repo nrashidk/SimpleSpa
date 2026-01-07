@@ -280,8 +280,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { email, password } = req.body;
       
-      console.log('Admin login attempt:', { email, hasPassword: !!password });
-      
       // Validate input
       if (!email || !password) {
         return res.status(400).json({ message: "Email and password are required" });
