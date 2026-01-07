@@ -150,6 +150,7 @@ export interface IStorage {
 
   // Service operations
   getAllServices(): Promise<Service[]>;
+  getServicesBySpaId(spaId: number): Promise<Service[]>;
   getService(id: number): Promise<Service | undefined>;
   getServicesByCategory(categoryId: number): Promise<Service[]>;
   createService(service: InsertService): Promise<Service>;
@@ -197,6 +198,7 @@ export interface IStorage {
 
   // Product operations
   getAllProducts(): Promise<Product[]>;
+  getProductsBySpaId(spaId: number): Promise<Product[]>;
   getProductById(id: number): Promise<Product | undefined>;
   createProduct(product: InsertProduct): Promise<Product>;
   updateProduct(id: number, product: Partial<InsertProduct>): Promise<Product | undefined>;
@@ -204,6 +206,7 @@ export interface IStorage {
 
   // Customer operations
   getAllCustomers(): Promise<Customer[]>;
+  getCustomersBySpaId(spaId: number): Promise<Customer[]>;
   getCustomerById(id: number): Promise<Customer | undefined>;
   getCustomerByEmail(email: string): Promise<Customer | undefined>;
   getCustomerByPhone(phone: string): Promise<Customer | undefined>;
@@ -222,6 +225,7 @@ export interface IStorage {
 
   // Booking operations
   getAllBookings(): Promise<Booking[]>;
+  getBookingsBySpaId(spaId: number): Promise<Booking[]>;
   getBookingById(id: number): Promise<Booking | undefined>;
   getBookingsByCustomerId(customerId: number): Promise<Booking[]>;
   createBooking(booking: InsertBooking): Promise<Booking>;
@@ -664,6 +668,10 @@ export class DatabaseStorage implements IStorage {
   // Service operations
   async getAllServices(): Promise<Service[]> {
     return db.select().from(services).orderBy(services.categoryId, services.name);
+  }
+
+  async getServicesBySpaId(spaId: number): Promise<Service[]> {
+    return db.select().from(services).where(eq(services.spaId, spaId)).orderBy(services.categoryId, services.name);
   }
 
   async getService(id: number): Promise<Service | undefined> {
@@ -1122,6 +1130,10 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(products).orderBy(products.name);
   }
 
+  async getProductsBySpaId(spaId: number): Promise<Product[]> {
+    return db.select().from(products).where(eq(products.spaId, spaId)).orderBy(products.name);
+  }
+
   async getProductById(id: number): Promise<Product | undefined> {
     const [product] = await db.select().from(products).where(eq(products.id, id));
     return product;
@@ -1149,6 +1161,10 @@ export class DatabaseStorage implements IStorage {
   // Customer operations
   async getAllCustomers(): Promise<Customer[]> {
     return db.select().from(customers).orderBy(desc(customers.createdAt));
+  }
+
+  async getCustomersBySpaId(spaId: number): Promise<Customer[]> {
+    return db.select().from(customers).where(eq(customers.spaId, spaId)).orderBy(desc(customers.createdAt));
   }
 
   async getCustomerById(id: number): Promise<Customer | undefined> {
@@ -1430,6 +1446,10 @@ export class DatabaseStorage implements IStorage {
   // Booking operations
   async getAllBookings(): Promise<Booking[]> {
     return db.select().from(bookings).orderBy(desc(bookings.bookingDate));
+  }
+
+  async getBookingsBySpaId(spaId: number): Promise<Booking[]> {
+    return db.select().from(bookings).where(eq(bookings.spaId, spaId)).orderBy(desc(bookings.bookingDate));
   }
 
   async getBookingById(id: number): Promise<Booking | undefined> {

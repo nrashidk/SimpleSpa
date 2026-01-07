@@ -1,4 +1,6 @@
 import express, { type Request, Response, NextFunction } from "express";
+import rateLimit from "express-rate-limit";
+import helmet from "helmet";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { validateEnvironment } from "./validateEnv";
@@ -8,6 +10,38 @@ import { appointmentScheduler } from "./appointmentScheduler";
 validateEnvironment();
 
 const app = express();
+
+// Security headers (configured for development and production)
+app.use(helmet({
+  contentSecurityPolicy: process.env.NODE_ENV === 'production' ? undefined : false,
+  crossOriginEmbedderPolicy: false,
+}));
+
+// Rate limiters for different endpoint types
+export const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5, // 5 login attempts per window
+  message: { message: "Too many login attempts, please try again later" },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: false,
+});
+
+export const apiLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000, // 1 minute
+  max: 100, // 100 requests per minute for general API
+  message: { message: "Too many requests, please try again later" },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+export const bookingLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000, // 1 minute
+  max: 10, // 10 booking attempts per minute
+  message: { message: "Too many booking attempts, please try again later" },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 // CRITICAL: Register Stripe webhook BEFORE express.json() middleware
 // Stripe requires raw body for signature verification

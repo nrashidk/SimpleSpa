@@ -205,12 +205,13 @@ export const staffSchedules = pgTable("staff_schedules", {
   active: boolean("active").default(true),
 });
 
-// Products for inventory
+// Products for inventory - Multi-tenant: each product belongs to a spa
 export const products = pgTable("products", {
   id: serial("id").primaryKey(),
+  spaId: integer("spa_id").references(() => spas.id),
   name: text("name").notNull(),
   description: text("description"),
-  sku: text("sku").unique(),
+  sku: text("sku"),
   categoryId: integer("category_id"),
   costPrice: decimal("cost_price", { precision: 10, scale: 2 }),
   sellingPrice: decimal("selling_price", { precision: 10, scale: 2 }).notNull(),
@@ -220,6 +221,7 @@ export const products = pgTable("products", {
   active: boolean("active").default(true),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 }, (table) => [
+  index("idx_products_spa").on(table.spaId),
   index("idx_products_category").on(table.categoryId),
   index("idx_products_sku").on(table.sku),
   index("idx_products_active").on(table.active),
@@ -290,9 +292,10 @@ export const membershipUsage = pgTable("membership_usage", {
   index("idx_membership_usage_booking").on(table.bookingId),
 ]);
 
-// Customers
+// Customers - Multi-tenant: each customer belongs to a spa
 export const customers = pgTable("customers", {
   id: serial("id").primaryKey(),
+  spaId: integer("spa_id").references(() => spas.id),
   userId: varchar("user_id").references(() => users.id),
   name: text("name").notNull(),
   email: text("email"),
@@ -311,6 +314,7 @@ export const customers = pgTable("customers", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 }, (table) => [
+  index("idx_customers_spa").on(table.spaId),
   index("idx_customers_email").on(table.email),
   index("idx_customers_phone").on(table.phone),
   index("idx_customers_blocked").on(table.blocked),

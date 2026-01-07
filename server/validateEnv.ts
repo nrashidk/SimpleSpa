@@ -5,6 +5,10 @@ const envSchema = z.object({
   SESSION_SECRET: z.string().min(32, "SESSION_SECRET must be at least 32 characters"),
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
   PORT: z.string().regex(/^\d+$/).transform(Number).default("5000"),
+  // ENCRYPTION_KEY is optional but validated if present (required for OAuth token encryption)
+  ENCRYPTION_KEY: z.string()
+    .min(32, "ENCRYPTION_KEY must be at least 32 characters for 256-bit security")
+    .optional(),
 });
 
 export function validateEnvironment() {

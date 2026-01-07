@@ -2,6 +2,7 @@ import express, { type Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { setupAuth, isAuthenticated, isAdmin, isSuperAdmin, injectAdminSpa, enforceSetupWizard, ensureSetupComplete } from "./firebaseAuth";
+import { loginLimiter, bookingLimiter, apiLimiter } from "./index";
 import { generateAvailableTimeSlots, validateBooking } from "./timeSlotService";
 import { notificationService } from "./notificationService";
 import { requireStaff, requireStaffRole, getStaffByUserId, canViewStaffCalendar, canEditAppointments, canAccessDashboard } from "./staffPermissions";
@@ -113,6 +114,34 @@ function handleRouteError(res: any, error: any, message: string) {
 function parseNumericId(param: string): number | null {
   const id = parseInt(param);
   return Number.isFinite(id) ? id : null;
+}
+
+// Password validation helper - enforces strong password policy
+function validatePassword(password: string): { valid: boolean; message?: string } {
+  if (!password || password.length < 12) {
+    return { valid: false, message: "Password must be at least 12 characters long" };
+  }
+  if (password.length > 128) {
+    return { valid: false, message: "Password must be 128 characters or less" };
+  }
+  if (!/[A-Z]/.test(password)) {
+    return { valid: false, message: "Password must contain at least one uppercase letter" };
+  }
+  if (!/[a-z]/.test(password)) {
+    return { valid: false, message: "Password must contain at least one lowercase letter" };
+  }
+  if (!/[0-9]/.test(password)) {
+    return { valid: false, message: "Password must contain at least one number" };
+  }
+  if (!/[^A-Za-z0-9]/.test(password)) {
+    return { valid: false, message: "Password must contain at least one special character" };
+  }
+  // Check for common passwords
+  const commonPasswords = ['password123', 'password1234', 'admin123456', 'qwerty123456'];
+  if (commonPasswords.includes(password.toLowerCase())) {
+    return { valid: false, message: "Password is too common. Please choose a stronger password." };
+  }
+  return { valid: true };
 }
 
 // Configure multer for file uploads
@@ -275,8 +304,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Admin login route (email/password authentication)
-  app.post('/api/admin/login', async (req, res) => {
+  // Admin login route (email/password authentication) - Rate limited to prevent brute force
+  app.post('/api/admin/login', loginLimiter, async (req, res) => {
     try {
       const { email, password } = req.body;
       
@@ -391,9 +420,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Email and password are required" });
       }
 
-      // Validate password strength
-      if (password.length < 8) {
-        return res.status(400).json({ message: "Password must be at least 8 characters long" });
+      // Validate password strength with enhanced policy
+      const passwordValidation = validatePassword(password);
+      if (!passwordValidation.valid) {
+        return res.status(400).json({ message: passwordValidation.message });
       }
 
       // Check if user already exists
@@ -731,6 +761,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Public spa services endpoint
+  // Public spa services endpoint - Filter in database for efficiency and security
   app.get("/api/spas/:id/services", async (req, res) => {
     try {
       const id = parseNumericId(req.params.id);
@@ -738,15 +769,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Invalid spa ID" });
       }
       
-      const services = await storage.getAllServices();
-      const spaServices = services.filter(s => s.spaId === id);
-      res.json(spaServices);
+      const services = await storage.getServicesBySpaId(id);
+      res.json(services);
     } catch (error) {
       handleRouteError(res, error, "Failed to fetch spa services");
     }
   });
 
-  // Public spa staff endpoint
+  // Public spa staff endpoint - Filter in database for efficiency and security
   app.get("/api/spas/:id/staff", async (req, res) => {
     try {
       const id = parseNumericId(req.params.id);
@@ -754,9 +784,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Invalid spa ID" });
       }
       
-      const staff = await storage.getAllStaff();
-      const spaStaff = staff.filter(s => s.spaId === id);
-      res.json(spaStaff);
+      const staff = await storage.getStaffBySpaId(id);
+      res.json(staff);
     } catch (error) {
       handleRouteError(res, error, "Failed to fetch spa staff");
     }
@@ -2098,10 +2127,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Service routes
-  app.get("/api/admin/services", isAdmin, async (req, res) => {
+  // Service routes - Filter by admin's spaId for multi-tenant isolation
+  app.get("/api/admin/services", isAdmin, injectAdminSpa, async (req: any, res) => {
     try {
-      const services = await storage.getAllServices();
+      const services = await storage.getServicesBySpaId(req.adminSpa.id);
       res.json(services);
     } catch (error) {
       console.error("Error fetching services:", error);
@@ -2164,15 +2193,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       const service = await storage.getService(id);
+      if (!service) {
+        return res.status(404).json({ message: "Service not found" });
+      }
+      
+      // IDOR Protection: Verify ownership before delete
+      if (service.spaId !== req.adminSpa.id) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      
       const deleted = await storage.deleteService(id);
       if (!deleted) {
         return res.status(404).json({ message: "Service not found" });
       }
       
       // Log service deletion to audit trail
-      if (service) {
-        await AuditLogger.logDelete(req, "service", id, service, service.spaId);
-      }
+      await AuditLogger.logDelete(req, "service", id, service, service.spaId);
       
       res.json({ success: true });
     } catch (error) {
@@ -2411,9 +2447,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Staff routes
-  app.get("/api/admin/staff", isAdmin, async (req, res) => {
+  // Staff routes - Filter by admin's spaId for multi-tenant isolation
+  app.get("/api/admin/staff", isAdmin, injectAdminSpa, async (req: any, res) => {
     try {
-      const staff = await storage.getAllStaff();
+      const staff = await storage.getStaffBySpaId(req.adminSpa.id);
       res.json(staff);
     } catch (error) {
       console.error("Error fetching staff:", error);
@@ -2475,16 +2512,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Invalid staff ID" });
       }
       
-      const staff = await storage.getStaffById(id);
+      const staffMember = await storage.getStaffById(id);
+      if (!staffMember) {
+        return res.status(404).json({ message: "Staff member not found" });
+      }
+      
+      // IDOR Protection: Verify ownership before delete
+      if (staffMember.spaId !== req.adminSpa.id) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      
       const deleted = await storage.deleteStaff(id);
       if (!deleted) {
         return res.status(404).json({ message: "Staff member not found" });
       }
       
       // Log staff deletion to audit trail
-      if (staff) {
-        await AuditLogger.logDelete(req, "staff", id, staff, staff.spaId);
-      }
+      await AuditLogger.logDelete(req, "staff", id, staffMember, staffMember.spaId);
       
       res.json({ success: true });
     } catch (error) {
@@ -2745,9 +2789,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Product routes
-  app.get("/api/admin/products", isAdmin, async (req, res) => {
+  // Product routes - Filter by admin's spaId for multi-tenant isolation
+  app.get("/api/admin/products", isAdmin, injectAdminSpa, async (req: any, res) => {
     try {
-      const products = await storage.getAllProducts();
+      const products = await storage.getProductsBySpaId(req.adminSpa.id);
       res.json(products);
     } catch (error) {
       console.error("Error fetching products:", error);
@@ -2784,12 +2829,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete("/api/admin/products/:id", isAdmin, async (req, res) => {
+  app.delete("/api/admin/products/:id", isAdmin, injectAdminSpa, async (req: any, res) => {
     try {
       const id = parseNumericId(req.params.id);
       if (id === null) {
         return res.status(400).json({ message: "Invalid product ID" });
       }
+      
+      const product = await storage.getProductById(id);
+      if (!product) {
+        return res.status(404).json({ message: "Product not found" });
+      }
+      
+      // IDOR Protection: Verify ownership before delete
+      if (product.spaId !== req.adminSpa.id) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      
       const deleted = await storage.deleteProduct(id);
       if (!deleted) {
         return res.status(404).json({ message: "Product not found" });
@@ -3095,9 +3151,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Customer routes
-  app.get("/api/admin/customers", isAdmin, async (req, res) => {
+  // Customer routes - Filter by admin's spaId for multi-tenant isolation
+  app.get("/api/admin/customers", isAdmin, injectAdminSpa, async (req: any, res) => {
     try {
-      const customers = await storage.getAllCustomers();
+      const customers = await storage.getCustomersBySpaId(req.adminSpa.id);
       res.json(customers);
     } catch (error) {
       console.error("Error fetching customers:", error);
@@ -3136,12 +3193,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete("/api/admin/customers/:id", isAdmin, async (req, res) => {
+  app.delete("/api/admin/customers/:id", isAdmin, injectAdminSpa, async (req: any, res) => {
     try {
       const id = parseNumericId(req.params.id);
       if (id === null) {
         return res.status(400).json({ message: "Invalid customer ID" });
       }
+      
+      const customer = await storage.getCustomerById(id);
+      if (!customer) {
+        return res.status(404).json({ message: "Customer not found" });
+      }
+      
+      // IDOR Protection: Verify ownership before delete
+      if (customer.spaId !== req.adminSpa.id) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      
       const deleted = await storage.deleteCustomer(id);
       if (!deleted) {
         return res.status(404).json({ message: "Customer not found" });
