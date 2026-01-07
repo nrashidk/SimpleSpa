@@ -30,7 +30,18 @@ The backend utilizes a PostgreSQL database and an Express-based REST API.
 -   **Calendar Validation:** Ensures accurate time slot generation based on business hours, service durations, and staff availability.
 -   **Multi-Provider Notification System:** Supports Twilio and MSG91 for Email, SMS, and WhatsApp notifications, with AES-256-GCM encryption for credentials and per-spa provider selection. Staff notifications are also configurable.
 -   **Audit Trail:** Tracks all significant changes with user context, IP, and user agent.
--   **Security Hardening:** Includes secure ID validation, consistent error handling (Zod), environment variable validation, and multi-tenant security measures to prevent cross-spa data access.
+-   **Security Hardening (Updated 2026-01-07):**
+    - **Rate Limiting:** Login (5 per 15 min), booking (10 per min), API (100 per min) to prevent brute force and DoS
+    - **Helmet Security Headers:** CSP, XSS protection, HSTS, and other security headers
+    - **Multi-Tenant Data Isolation:** All tables (services, staff, products, customers, bookings) filter by spaId with database-level enforcement
+    - **IDOR Protection:** All DELETE/UPDATE endpoints verify resource ownership before mutation
+    - **Strong Password Policy:** 12+ characters with uppercase, lowercase, numbers, and special characters
+    - **Session Security:** SameSite=lax cookies, session regeneration on auth state changes
+    - **Input Validation:** Zod schemas for all API endpoints
+    - **XSS Protection:** React output encoding (automatic) + helmet CSP headers
+    - **Environment Validation:** Required secrets (ENCRYPTION_KEY, DATABASE_URL) validated at startup
+    - **Secure ID Validation:** All numeric ID params validated with parseNumericId helper
+    - **Centralized Error Handling:** DomainError class and handleRouteError for consistent error responses
 -   **Admin-Spa Linkage & Onboarding:** Robust middleware (`injectAdminSpa`) links admin users to their specific spa. A pending approval workflow and a 6-step setup wizard ensure new admins configure their spa before accessing full features. The wizard covers Basic Info, Location, Business Hours, Services, Staff, and Activation.
 -   **Membership Management:** CRUD operations for memberships/packages, supporting one-time/recurring payments, limited/unlimited sessions, validity periods, and online sales toggles. Integrates with invoicing for revenue tracking.
 -   **Finance & Accounting Reporting:** Comprehensive dashboard with 5 report types: Finance Summary, Sales Summary, Sales List, Appointments Summary, and Payment Summary. Includes date range filters, sortable columns, and planned export functionality (CSV, Excel, PDF).
