@@ -71,6 +71,14 @@ app.post('/api/webhooks/stripe', express.raw({ type: 'application/json' }), asyn
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
+// XSS Protection Strategy:
+// 1. Helmet CSP headers prevent inline script execution
+// 2. React automatically escapes HTML in JSX (output encoding)
+// 3. API responses are JSON (not HTML), preventing reflected XSS
+// 4. Input validation via Zod schemas rejects malformed data
+// Note: Server-side input sanitization was removed as it corrupts legitimate
+// data (O'Brien -> O&#x27;Brien). Output encoding is the correct approach.
+
 app.use((req, res, next) => {
   const start = Date.now();
   const path = req.path;
