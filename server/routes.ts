@@ -1,6 +1,7 @@
 import express, { type Express } from "express";
 import { createServer, type Server } from "http";
 import crypto from "crypto";
+import { z } from "zod";
 import { storage } from "./storage";
 import { setupAuth, isAuthenticated, isAdmin, isSuperAdmin, injectAdminSpa, enforceSetupWizard, ensureSetupComplete } from "./firebaseAuth";
 import { loginLimiter, bookingLimiter, apiLimiter, validateCsrf, ensureCsrfToken } from "./index";
@@ -26,6 +27,30 @@ import multer from "multer";
 import path from "path";
 import fs from "fs";
 import bcrypt from "bcryptjs";
+import {
+  insertSpaSettingsSchema,
+  insertServiceCategorySchema,
+  insertServiceSchema,
+  insertMembershipSchema,
+  insertMembershipServiceSchema,
+  insertCustomerMembershipSchema,
+  insertMembershipUsageSchema,
+  insertStaffSchema,
+  insertStaffScheduleSchema,
+  insertStaffTimeEntrySchema,
+  insertProductSchema,
+  insertCustomerSchema,
+  insertPromoCodeSchema,
+  insertBookingSchema,
+  insertBookingItemSchema,
+  insertTransactionSchema,
+  insertLoyaltyCardSchema,
+  insertLoyaltyCardUsageSchema,
+  insertProductSaleSchema,
+  insertVendorSchema,
+  insertExpenseSchema,
+  insertBillSchema,
+} from "@shared/schema";
 
 // OAuth State HMAC signing for CSRF protection
 function signOAuthState(data: object): string {
@@ -59,30 +84,21 @@ function verifyOAuthState(state: string): { valid: boolean; data?: any } {
 // We just need bcrypt.compare to run the same amount of work for non-existent users
 const DUMMY_PASSWORD_HASH = '$2b$10$2NHsfc5kq84lGXf/Glaa2uaU47qlqt9JGX0r3w53bbZOUDM9ir2hm';
 
-import {
-  insertSpaSettingsSchema,
-  insertServiceCategorySchema,
-  insertServiceSchema,
-  insertMembershipSchema,
-  insertMembershipServiceSchema,
-  insertCustomerMembershipSchema,
-  insertMembershipUsageSchema,
-  insertStaffSchema,
-  insertStaffScheduleSchema,
-  insertStaffTimeEntrySchema,
-  insertProductSchema,
-  insertCustomerSchema,
-  insertPromoCodeSchema,
-  insertBookingSchema,
-  insertBookingItemSchema,
-  insertTransactionSchema,
-  insertLoyaltyCardSchema,
-  insertLoyaltyCardUsageSchema,
-  insertProductSaleSchema,
-  insertVendorSchema,
-  insertExpenseSchema,
-  insertBillSchema,
-} from "@shared/schema";
+// Public booking request validation schema
+const publicBookingRequestSchema = z.object({
+  spaId: z.number().int().positive("Invalid spa ID"),
+  customerName: z.string().min(2, "Name must be at least 2 characters").max(100, "Name too long"),
+  customerEmail: z.string().email("Invalid email format").optional().nullable(),
+  customerPhone: z.string().regex(/^\+?[1-9]\d{7,14}$/, "Invalid phone format").optional().nullable(),
+  services: z.array(z.number().int().positive()).min(1, "At least one service required").max(10, "Maximum 10 services"),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD format"),
+  time: z.string().regex(/^(\d{1,2}:\d{2}(\s*[AP]M)?|\d{2}:\d{2})$/i, "Invalid time format"),
+  staffId: z.number().int().positive().optional().nullable(),
+  notes: z.string().max(500, "Notes too long").optional().nullable(),
+}).refine(data => data.customerEmail || data.customerPhone, {
+  message: "Either email or phone is required",
+  path: ["customerEmail"],
+});
 
 // Domain error class for business logic errors
 export class DomainError extends Error {
@@ -97,9 +113,14 @@ export class DomainError extends Error {
   }
 }
 
+// Generate unique error ID for tracking without exposing details
+function generateErrorId(): string {
+  return `ERR-${Date.now().toString(36)}-${Math.random().toString(36).substr(2, 5)}`.toUpperCase();
+}
+
 // Helper function for consistent error handling
 function handleRouteError(res: any, error: any, message: string) {
-  // Domain errors (business logic)
+  // Domain errors (business logic) - safe to expose
   if (error instanceof DomainError) {
     return res.status(error.status).json({ 
       message: error.message, 
@@ -107,24 +128,27 @@ function handleRouteError(res: any, error: any, message: string) {
     });
   }
   
-  // Zod validation errors
+  // Zod validation errors - safe to expose field-level errors
   if (error.name === "ZodError") {
     return res.status(400).json({ 
       message: "Validation error", 
-      errors: error.errors 
+      errors: error.errors.map((e: any) => ({ 
+        field: e.path.join('.'), 
+        message: e.message 
+      }))
     });
   }
   
-  // Postgres database errors
+  // Postgres database errors - return generic messages in production
   if (error.code === '23505') { // Unique constraint violation
     return res.status(409).json({ 
-      message: "Duplicate entry - this record already exists" 
+      message: "This record already exists" 
     });
   }
   
   if (error.code === '23503') { // Foreign key constraint violation
     return res.status(400).json({ 
-      message: "Foreign key constraint failed - referenced record does not exist" 
+      message: "Referenced record does not exist" 
     });
   }
   
@@ -134,12 +158,31 @@ function handleRouteError(res: any, error: any, message: string) {
     });
   }
   
-  // Log full error for debugging
-  console.error(message, error);
+  // Generate error ID for tracking
+  const errorId = generateErrorId();
   
-  // Return error message if available, otherwise use default message
+  // Log full error details for debugging (server-side only)
+  console.error(`[${errorId}] ${message}:`, {
+    error: error.message,
+    stack: error.stack,
+    code: error.code,
+    timestamp: new Date().toISOString()
+  });
+  
+  // Production: Return generic message with error ID for support
+  // Development: Include error details for debugging
+  if (process.env.NODE_ENV === 'production') {
+    return res.status(500).json({ 
+      message: "An unexpected error occurred. Please try again later.",
+      errorId: errorId
+    });
+  }
+  
+  // Development: Include error details
   res.status(500).json({ 
-    message: error.message || message 
+    message: error.message || message,
+    errorId: errorId,
+    stack: error.stack
   });
 }
 
@@ -895,36 +938,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Public booking creation endpoint
-  app.post("/api/bookings", async (req, res) => {
+  app.post("/api/bookings", bookingLimiter, async (req, res) => {
     try {
-      const { spaId, customerName, customerEmail, customerPhone, services, date, time, staffId, notes } = req.body;
-
-      // Log booking request without PII
-      console.log('Booking request received:', { 
-        spaId, 
-        hasCustomerName: !!customerName,
-        hasEmail: !!customerEmail,
-        hasPhone: !!customerPhone,
-        servicesCount: services?.length || 0, 
-        date, 
-        time, 
-        hasStaffId: !!staffId 
-      });
-
-      if (!spaId || !customerName || !services || !Array.isArray(services) || services.length === 0 || !date || !time) {
-        console.log('Booking validation failed - missing fields:', { 
-          spaId: !!spaId, 
-          customerName: !!customerName, 
-          services: !!services && Array.isArray(services) && services.length > 0,
-          date: !!date,
-          time: !!time 
+      // Validate input using Zod schema
+      const validationResult = publicBookingRequestSchema.safeParse(req.body);
+      if (!validationResult.success) {
+        return res.status(400).json({ 
+          message: "Validation error", 
+          errors: validationResult.error.errors.map(e => ({ 
+            field: e.path.join('.'), 
+            message: e.message 
+          }))
         });
-        return res.status(400).json({ message: "Missing required fields" });
       }
-
-      if (!customerEmail && !customerPhone) {
-        return res.status(400).json({ message: "Either email or phone is required" });
-      }
+      
+      const { spaId, customerName, customerEmail, customerPhone, services, date, time, staffId, notes } = validationResult.data;
 
       // Find or create customer
       let customer;
