@@ -464,9 +464,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           
           await AuditLogger.logAuth(req, "LOGIN", user.id);
           
+          const { password: _, passwordResetToken: __, passwordResetExpires: ___, ...safeUser } = user;
           return res.json({ 
             success: true, 
-            user,
+            user: safeUser,
             csrfToken: (req.session as any).csrfToken
           });
         });

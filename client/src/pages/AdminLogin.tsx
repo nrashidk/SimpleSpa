@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
-import { Sparkles, Upload, FileText, CheckCircle2, Loader2, Clock, CheckCircle, XCircle } from "lucide-react";
+import { Sparkles, Upload, FileText, CheckCircle2, Loader2, Clock, CheckCircle, XCircle, Eye, EyeOff } from "lucide-react";
 import { setCsrfToken } from "@/lib/queryClient";
 
 type AuthStatus = {
@@ -47,6 +47,9 @@ export default function AdminLogin() {
   const [loginPassword, setLoginPassword] = useState("");
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [showRegistration, setShowRegistration] = useState(false);
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
+  const [showRegPassword, setShowRegPassword] = useState(false);
+  const [showRegConfirmPassword, setShowRegConfirmPassword] = useState(false);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -67,7 +70,7 @@ export default function AdminLogin() {
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({ 
-          email: loginEmail,
+          email: loginEmail.toLowerCase().trim(),
           password: loginPassword
         }),
       });
@@ -287,15 +290,25 @@ export default function AdminLogin() {
 
                   <div className="space-y-2">
                     <Label htmlFor="password">Password</Label>
-                    <Input
-                      id="password"
-                      type="password"
-                      placeholder="••••••••"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      required
-                      data-testid="input-password"
-                    />
+                    <div className="relative">
+                      <Input
+                        id="password"
+                        type={showRegPassword ? "text" : "password"}
+                        placeholder="••••••••"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        required
+                        data-testid="input-password"
+                        className="pr-10"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowRegPassword(!showRegPassword)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                      >
+                        {showRegPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </button>
+                    </div>
                     <p className="text-xs text-muted-foreground">
                       Minimum 8 characters
                     </p>
@@ -303,15 +316,25 @@ export default function AdminLogin() {
 
                   <div className="space-y-2">
                     <Label htmlFor="confirm-password">Confirm Password</Label>
-                    <Input
-                      id="confirm-password"
-                      type="password"
-                      placeholder="••••••••"
-                      value={confirmPassword}
-                      onChange={(e) => setConfirmPassword(e.target.value)}
-                      required
-                      data-testid="input-confirm-password"
-                    />
+                    <div className="relative">
+                      <Input
+                        id="confirm-password"
+                        type={showRegConfirmPassword ? "text" : "password"}
+                        placeholder="••••••••"
+                        value={confirmPassword}
+                        onChange={(e) => setConfirmPassword(e.target.value)}
+                        required
+                        data-testid="input-confirm-password"
+                        className="pr-10"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowRegConfirmPassword(!showRegConfirmPassword)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                      >
+                        {showRegConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </button>
+                    </div>
                   </div>
 
                   <div className="space-y-2">
@@ -435,15 +458,25 @@ export default function AdminLogin() {
                     Forgot password?
                   </Link>
                 </div>
-                <Input
-                  id="login-password"
-                  type="password"
-                  placeholder="••••••••"
-                  value={loginPassword}
-                  onChange={(e) => setLoginPassword(e.target.value)}
-                  required
-                  data-testid="input-login-password"
-                />
+                <div className="relative">
+                  <Input
+                    id="login-password"
+                    type={showLoginPassword ? "text" : "password"}
+                    placeholder="••••••••"
+                    value={loginPassword}
+                    onChange={(e) => setLoginPassword(e.target.value)}
+                    required
+                    data-testid="input-login-password"
+                    className="pr-10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowLoginPassword(!showLoginPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  >
+                    {showLoginPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
               </div>
 
               <Button
