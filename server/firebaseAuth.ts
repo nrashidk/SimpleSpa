@@ -84,24 +84,39 @@ export async function setupAuth(app: Express) {
 
       const expiresAt = Math.floor(Date.now() / 1000) + (7 * 24 * 60 * 60);
       
-      (req.session as any).user = {
-        claims: {
-          sub: firebaseUser.uid,
-          email: firebaseUser.email,
-        },
-        expires_at: expiresAt,
-        firebaseAuth: true,
-      };
-
-      await AuditLogger.logAuth(req, "LOGIN", firebaseUser.uid);
-
-      res.json({ 
-        success: true, 
-        user: {
-          id: firebaseUser.uid,
-          email: firebaseUser.email,
-          name: firebaseUser.name,
+      // SECURITY: Regenerate session to prevent session fixation attacks
+      req.session.regenerate((regenerateErr) => {
+        if (regenerateErr) {
+          console.error('Session regeneration error:', regenerateErr);
+          return res.status(500).json({ message: "Login failed" });
         }
+        
+        (req.session as any).user = {
+          claims: {
+            sub: firebaseUser.uid,
+            email: firebaseUser.email,
+          },
+          expires_at: expiresAt,
+          firebaseAuth: true,
+        };
+
+        req.session.save(async (saveErr) => {
+          if (saveErr) {
+            console.error('Session save error:', saveErr);
+            return res.status(500).json({ message: "Login failed" });
+          }
+          
+          await AuditLogger.logAuth(req, "LOGIN", firebaseUser.uid);
+
+          res.json({ 
+            success: true, 
+            user: {
+              id: firebaseUser.uid,
+              email: firebaseUser.email,
+              name: firebaseUser.name,
+            }
+          });
+        });
       });
     } catch (error) {
       console.error("Firebase auth error:", error);

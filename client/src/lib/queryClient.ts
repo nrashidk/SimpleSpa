@@ -7,14 +7,60 @@ async function throwIfResNotOk(res: Response) {
   }
 }
 
+// CSRF Token management - cached token to avoid redundant fetches
+let csrfToken: string | null = null;
+let csrfTokenPromise: Promise<string> | null = null;
+
+async function getCsrfToken(): Promise<string> {
+  if (csrfToken) return csrfToken;
+  
+  // Prevent multiple simultaneous fetches
+  if (csrfTokenPromise) return csrfTokenPromise;
+  
+  csrfTokenPromise = fetch('/api/csrf-token', { credentials: 'include' })
+    .then(res => res.json())
+    .then(data => {
+      csrfToken = data.csrfToken;
+      csrfTokenPromise = null;
+      return csrfToken!;
+    })
+    .catch(err => {
+      csrfTokenPromise = null;
+      console.error('Failed to fetch CSRF token:', err);
+      return '';
+    });
+  
+  return csrfTokenPromise;
+}
+
+// Clear CSRF token on logout (call this when user logs out)
+export function clearCsrfToken() {
+  csrfToken = null;
+  csrfTokenPromise = null;
+}
+
 export async function apiRequest(
   method: string,
   url: string,
   data?: unknown | undefined,
 ): Promise<Response> {
+  const headers: Record<string, string> = {};
+  
+  if (data) {
+    headers["Content-Type"] = "application/json";
+  }
+  
+  // Add CSRF token for state-changing requests
+  if (!['GET', 'HEAD', 'OPTIONS'].includes(method.toUpperCase())) {
+    const token = await getCsrfToken();
+    if (token) {
+      headers["X-CSRF-Token"] = token;
+    }
+  }
+  
   const res = await fetch(url, {
     method,
-    headers: data ? { "Content-Type": "application/json" } : {},
+    headers,
     body: data ? JSON.stringify(data) : undefined,
     credentials: "include",
   });

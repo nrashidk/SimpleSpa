@@ -2,6 +2,7 @@ import express, { type Request, Response, NextFunction } from "express";
 import rateLimit from "express-rate-limit";
 import helmet from "helmet";
 import cors from "cors";
+import crypto from "crypto";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { validateEnvironment } from "./validateEnv";
@@ -105,6 +106,53 @@ app.use(express.urlencoded({ extended: false }));
 // 4. Input validation via Zod schemas rejects malformed data
 // Note: Server-side input sanitization was removed as it corrupts legitimate
 // data (O'Brien -> O&#x27;Brien). Output encoding is the correct approach.
+
+// CSRF Protection - Session-bound synchronizer token pattern
+// Routes that are exempt from CSRF protection (webhooks, etc.)
+const CSRF_EXEMPT_ROUTES = [
+  '/api/webhooks/stripe',
+  '/api/webhooks/whatsapp',
+  '/api/webhooks/twilio',
+  '/api/auth/firebase', // Firebase token auth has its own verification
+];
+
+// Middleware to ensure CSRF token exists in session
+function ensureCsrfToken(req: Request, res: Response, next: NextFunction) {
+  if (!(req.session as any).csrfToken) {
+    (req.session as any).csrfToken = crypto.randomBytes(32).toString('hex');
+  }
+  next();
+}
+
+// Middleware to validate CSRF token on state-changing requests
+function validateCsrf(req: Request, res: Response, next: NextFunction) {
+  // Skip for safe methods
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
+    return next();
+  }
+  
+  // Skip for exempt routes
+  if (CSRF_EXEMPT_ROUTES.some(route => req.path.startsWith(route))) {
+    return next();
+  }
+  
+  // Skip if no session (unauthenticated requests)
+  if (!(req.session as any).csrfToken) {
+    return next();
+  }
+  
+  const token = req.headers['x-csrf-token'] as string;
+  const sessionToken = (req.session as any).csrfToken;
+  
+  if (!token || token !== sessionToken) {
+    return res.status(403).json({ message: 'Invalid CSRF token' });
+  }
+  
+  next();
+}
+
+// Export for use in routes
+export { ensureCsrfToken, validateCsrf };
 
 app.use((req, res, next) => {
   const start = Date.now();

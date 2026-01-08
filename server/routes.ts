@@ -1,8 +1,9 @@
 import express, { type Express } from "express";
 import { createServer, type Server } from "http";
+import crypto from "crypto";
 import { storage } from "./storage";
 import { setupAuth, isAuthenticated, isAdmin, isSuperAdmin, injectAdminSpa, enforceSetupWizard, ensureSetupComplete } from "./firebaseAuth";
-import { loginLimiter, bookingLimiter, apiLimiter } from "./index";
+import { loginLimiter, bookingLimiter, apiLimiter, validateCsrf } from "./index";
 import { generateAvailableTimeSlots, validateBooking } from "./timeSlotService";
 import { notificationService } from "./notificationService";
 import { requireStaff, requireStaffRole, getStaffByUserId, canViewStaffCalendar, canEditAppointments, canAccessDashboard } from "./staffPermissions";
@@ -25,6 +26,36 @@ import multer from "multer";
 import path from "path";
 import fs from "fs";
 import bcrypt from "bcryptjs";
+
+// OAuth State HMAC signing for CSRF protection
+function signOAuthState(data: object): string {
+  const secret = process.env.SESSION_SECRET || 'fallback-secret';
+  const stateJson = JSON.stringify(data);
+  const hmac = crypto.createHmac('sha256', secret);
+  hmac.update(stateJson);
+  const signature = hmac.digest('hex');
+  return Buffer.from(JSON.stringify({ data, signature })).toString('base64');
+}
+
+function verifyOAuthState(state: string): { valid: boolean; data?: any } {
+  try {
+    const secret = process.env.SESSION_SECRET || 'fallback-secret';
+    const decoded = JSON.parse(Buffer.from(state, 'base64').toString());
+    const hmac = crypto.createHmac('sha256', secret);
+    hmac.update(JSON.stringify(decoded.data));
+    const expectedSignature = hmac.digest('hex');
+    
+    if (decoded.signature !== expectedSignature) {
+      return { valid: false };
+    }
+    return { valid: true, data: decoded.data };
+  } catch {
+    return { valid: false };
+  }
+}
+
+// Dummy password hash for constant-time comparison (prevents email enumeration)
+const DUMMY_PASSWORD_HASH = '$2a$10$dummyhashtopreventtimingattacksenumeration';
 
 import {
   insertSpaSettingsSchema,
@@ -182,6 +213,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware setup
   await setupAuth(app);
 
+  // CSRF Protection - apply to all API routes after session setup
+  app.use('/api', validateCsrf);
+
+  // CSRF Token endpoint - returns the session-bound CSRF token
+  app.get('/api/csrf-token', (req, res) => {
+    // Ensure CSRF token exists in session
+    if (!(req.session as any).csrfToken) {
+      (req.session as any).csrfToken = crypto.randomBytes(32).toString('hex');
+    }
+    res.json({ csrfToken: (req.session as any).csrfToken });
+  });
+
   // File upload endpoint for license documents
   app.post('/api/upload/license', upload.single('file'), (req, res) => {
     try {
@@ -208,13 +251,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const relativePath = path.normalize(req.path).replace(/^\/+/, '');
       const filePath = path.join(uploadsBase, relativePath);
       
-      // Prevent path traversal by ensuring resolved path is within uploads directory
-      if (!filePath.startsWith(uploadsBase)) {
+      // Check if file exists first
+      if (!fs.existsSync(filePath)) {
+        return res.status(404).json({ message: 'File not found' });
+      }
+      
+      // SECURITY: Resolve symlinks and verify the real path is within uploads directory
+      // This prevents symlink-based path traversal attacks
+      const realUploadsBase = fs.realpathSync(uploadsBase);
+      const realFilePath = fs.realpathSync(filePath);
+      
+      if (!realFilePath.startsWith(realUploadsBase)) {
         return res.status(403).json({ message: 'Access denied' });
       }
       
-      // Check if file exists
-      if (!fs.existsSync(filePath)) {
+      // Double-check file still exists after realpath (race condition protection)
+      if (!fs.existsSync(realFilePath)) {
         return res.status(404).json({ message: 'File not found' });
       }
       
@@ -305,6 +357,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Admin login route (email/password authentication) - Rate limited to prevent brute force
+  // SECURITY: Constant-time comparison to prevent email enumeration timing attacks
   app.post('/api/admin/login', loginLimiter, async (req, res) => {
     try {
       const { email, password } = req.body;
@@ -317,50 +370,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Look up user by email
       const user = await storage.getUserByEmail(email);
       
-      if (!user) {
-        console.log('User not found:', email);
+      // SECURITY: Always run bcrypt comparison even if user doesn't exist
+      // This prevents timing attacks that could enumerate valid email addresses
+      const passwordToCheck = user?.password || DUMMY_PASSWORD_HASH;
+      const passwordMatch = await bcrypt.compare(password, passwordToCheck);
+      
+      // Check all conditions with same error message to prevent enumeration
+      if (!user || !passwordMatch) {
         return res.status(401).json({ message: "Invalid credentials" });
       }
       
       // Check if user is admin or super_admin
       if (user.role !== 'admin' && user.role !== 'super_admin') {
-        console.log('User is not admin:', { email, role: user.role });
         return res.status(403).json({ message: "Access denied. Admin access required." });
       }
       
       // Check if user is approved
       if (user.status !== 'approved') {
-        console.log('User not approved:', { email, status: user.status });
         return res.status(403).json({ message: "Your account is pending approval" });
       }
       
-      // Verify password
-      if (!user.password) {
-        console.log('User has no password set:', email);
-        return res.status(401).json({ message: "Invalid credentials" });
-      }
-      
-      const passwordMatch = await bcrypt.compare(password, user.password);
-      
-      if (!passwordMatch) {
-        console.log('Password mismatch for user:', email);
-        return res.status(401).json({ message: "Invalid credentials" });
-      }
-      
-      // Set up session with required OIDC-like properties
-      const sessionUser = {
-        claims: { sub: user.id },
-        expires_at: Math.floor(Date.now() / 1000) + 86400, // 24 hours from now
-        refresh_token: 'email-password-login', // Dummy refresh token
-      };
-      
-      req.login(sessionUser, (err) => {
-        if (err) {
-          console.error('req.login error:', err);
+      // SECURITY: Regenerate session to prevent session fixation attacks
+      req.session.regenerate((regenerateErr) => {
+        if (regenerateErr) {
+          console.error('Session regeneration error:', regenerateErr);
           return res.status(500).json({ message: "Login failed" });
         }
-        console.log('Login successful, session created for:', email);
-        return res.json({ success: true, user });
+        
+        // Restore any needed session data and set user
+        (req.session as any).user = {
+          claims: { sub: user.id, email: user.email },
+          expires_at: Math.floor(Date.now() / 1000) + 86400, // 24 hours
+        };
+        
+        req.session.save((saveErr) => {
+          if (saveErr) {
+            console.error('Session save error:', saveErr);
+            return res.status(500).json({ message: "Login failed" });
+          }
+          return res.json({ success: true, user });
+        });
       });
     } catch (error) {
       console.error("Admin login error:", error);
@@ -595,13 +644,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Missing integrationType" });
       }
 
-      // Create state with spaId, integrationType, and userId for verification
-      const state = Buffer.from(JSON.stringify({
+      // SECURITY: Create HMAC-signed state to prevent OAuth CSRF attacks
+      const state = signOAuthState({
         spaId,
         integrationType,
         userId: req.user.claims.sub,
         timestamp: Date.now(),
-      })).toString('base64');
+      });
 
       const authUrl = generateAuthUrl(provider, integrationType as string, state);
       
@@ -625,9 +674,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.redirect('/admin/settings?oauth_error=missing_params');
       }
 
-      // Decode state
-      const stateData = JSON.parse(Buffer.from(state as string, 'base64').toString());
-      const { spaId, integrationType, userId, timestamp } = stateData;
+      // SECURITY: Verify HMAC-signed state to prevent OAuth CSRF attacks
+      const stateVerification = verifyOAuthState(state as string);
+      if (!stateVerification.valid) {
+        return res.redirect('/admin/settings?oauth_error=invalid_state');
+      }
+      
+      const { spaId, integrationType, userId, timestamp } = stateVerification.data;
 
       // Verify state is recent (within 10 minutes)
       if (Date.now() - timestamp > 10 * 60 * 1000) {
