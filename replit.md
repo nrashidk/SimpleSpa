@@ -22,7 +22,10 @@ The frontend is built with React and TypeScript, leveraging Shadcn components an
 The backend utilizes a PostgreSQL database and an Express-based REST API.
 -   **Database:** PostgreSQL (Neon-backed) stores all core application data.
 -   **API:** Provides endpoints for customer-facing features and a robust set of admin routes for resource and financial management.
--   **Authentication:** Replit Auth provides user authentication with role-based access control (customer, staff, admin, super_admin) and secure route protection.
+-   **Authentication:** Multi-method authentication with role-based access control (customer, staff, admin, super_admin):
+    - **Firebase/Google Sign-in:** OAuth-based authentication for customers and staff.
+    - **Email/Password:** Secure registration and login with bcrypt hashing (8+ chars for customers, 12+ chars with complexity for admins).
+    - **Phone OTP:** Mobile number authentication with 6-digit OTP via Twilio SMS. In-memory OTP storage with 10-minute expiry and attempt limits.
 -   **Staff Permissions:** A five-tier system controls staff access levels.
 -   **Revenue & Discount Tracking:** Comprehensive system for tracking all revenue streams, including service bookings, retail sales, and loyalty cards, with support for various discount types. All calculations are UAE VAT-compliant (5% VAT is part of the price).
 -   **UAE VAT Compliance System:** Optional VAT activation with intelligent invoice classification (full, simplified, standard), TRN management, 5-year data retention, and support for various tax codes. Exports FTA Audit Files.
@@ -36,7 +39,7 @@ The backend utilizes a PostgreSQL database and an Express-based REST API.
     - **Email Enumeration Prevention:** Constant-time bcrypt comparison using dummy hash for non-existent users.
     - **OAuth CSRF Protection:** HMAC-SHA256 signed state parameter for OAuth flows using SESSION_SECRET.
     - **File Upload Hardening:** Symlink resolution (fs.realpathSync) before path validation to prevent traversal attacks.
-    - **Rate Limiting:** Login (5 per 15 min), booking (10 per min), API (100 per min) to prevent brute force and DoS
+    - **Rate Limiting:** Login (5 per 15 min), booking (10 per min), API (100 per min), OTP request (3 per 15 min), OTP verify (10 per 15 min) to prevent brute force, DoS, and SMS flooding
     - **Helmet Security Headers:** CSP, XSS protection, HSTS, and other security headers
     - **Multi-Tenant Data Isolation:** All tables (services, staff, products, customers, bookings) filter by spaId with database-level enforcement
     - **IDOR Protection:** All DELETE/UPDATE endpoints verify resource ownership before mutation
