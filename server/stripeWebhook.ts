@@ -3,6 +3,7 @@ import { db } from "./db";
 import { bookings, whatsappConversations } from "@shared/schema";
 import { eq, sql, desc } from "drizzle-orm";
 import { sendPaymentConfirmation } from "./whatsappNotifications";
+import { logger } from "./logger";
 
 export async function handleStripeWebhook(payload: Buffer, signature: string): Promise<{ success: boolean; error?: string }> {
   try {
@@ -15,11 +16,11 @@ export async function handleStripeWebhook(payload: Buffer, signature: string): P
     if (webhookSecret) {
       event = stripe.webhooks.constructEvent(payload, signature, webhookSecret);
     } else {
-      console.warn('[Stripe Webhook] No webhook secret configured, parsing payload directly');
+      logger.warn('[Stripe Webhook] No webhook secret configured, parsing payload directly');
       event = JSON.parse(payload.toString());
     }
 
-    console.log(`[Stripe Webhook] Received event: ${event.type}`);
+    logger.info('[Stripe Webhook] Received event', { eventType: event.type });
 
     switch (event.type) {
       case 'checkout.session.completed':
@@ -32,12 +33,12 @@ export async function handleStripeWebhook(payload: Buffer, signature: string): P
         await handlePaymentFailed(event.data.object);
         break;
       default:
-        console.log(`[Stripe Webhook] Unhandled event type: ${event.type}`);
+        logger.debug('[Stripe Webhook] Unhandled event type', { eventType: event.type });
     }
 
     return { success: true };
   } catch (error: any) {
-    console.error('[Stripe Webhook] Error:', error.message);
+    logger.error('[Stripe Webhook] Error', { error: error.message });
     return { success: false, error: error.message };
   }
 }
@@ -46,13 +47,13 @@ async function handleCheckoutCompleted(session: any): Promise<void> {
   const bookingId = session.metadata?.booking_id;
   
   if (!bookingId) {
-    console.log('[Stripe Webhook] No booking_id in session metadata');
+    logger.warn('[Stripe Webhook] No booking_id in session metadata');
     return;
   }
 
   const bookingIdNum = parseInt(bookingId, 10);
   
-  console.log(`[Stripe Webhook] Checkout completed for booking #${bookingIdNum}`);
+  logger.info('[Stripe Webhook] Checkout completed', { bookingId: bookingIdNum });
 
   await db
     .update(bookings)
@@ -84,17 +85,14 @@ async function handleCheckoutCompleted(session: any): Promise<void> {
 
   await sendPaymentConfirmation(bookingIdNum);
   
-  console.log(`[Stripe Webhook] Booking #${bookingIdNum} marked as paid`);
+  logger.info('[Stripe Webhook] Booking marked as paid', { bookingId: bookingIdNum });
 }
 
 async function handlePaymentSucceeded(paymentIntent: any): Promise<void> {
-  console.log(`[Stripe Webhook] Payment succeeded: ${paymentIntent.id}`);
+  logger.info('[Stripe Webhook] Payment succeeded', { paymentIntentId: paymentIntent.id });
 }
 
 async function handlePaymentFailed(paymentIntent: any): Promise<void> {
-  console.log(`[Stripe Webhook] Payment failed: ${paymentIntent.id}`);
   const bookingId = paymentIntent.metadata?.booking_id;
-  if (bookingId) {
-    console.log(`[Stripe Webhook] Payment failed for booking #${bookingId}`);
-  }
+  logger.warn('[Stripe Webhook] Payment failed', { paymentIntentId: paymentIntent.id, bookingId: bookingId || null });
 }

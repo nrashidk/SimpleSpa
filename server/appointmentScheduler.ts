@@ -3,6 +3,7 @@ import { db } from "./db";
 import { bookings, customers } from "@shared/schema";
 import { eq, and, gte, lt, isNotNull, isNull } from "drizzle-orm";
 import { sendBookingReminder, sendBookingCompletion } from "./whatsappNotifications";
+import { logger } from "./logger";
 
 class AppointmentScheduler {
   private reminderJob: ScheduledTask | null = null;
@@ -11,11 +12,11 @@ class AppointmentScheduler {
 
   start(): void {
     if (this.isRunning) {
-      console.log('[Scheduler] Already running');
+      logger.debug('[Scheduler] Already running');
       return;
     }
 
-    console.log('[Scheduler] Starting appointment scheduler...');
+    logger.info('[Scheduler] Starting appointment scheduler...');
 
     this.reminderJob = cron.schedule('0 * * * *', async () => {
       await this.sendUpcomingReminders();
@@ -30,7 +31,7 @@ class AppointmentScheduler {
     });
 
     this.isRunning = true;
-    console.log('[Scheduler] Started - reminders every hour, review requests every hour');
+    logger.info('[Scheduler] Started - reminders every hour, review requests every hour');
   }
 
   stop(): void {
@@ -43,11 +44,11 @@ class AppointmentScheduler {
       this.completionJob = null;
     }
     this.isRunning = false;
-    console.log('[Scheduler] Stopped');
+    logger.info('[Scheduler] Stopped');
   }
 
   async sendUpcomingReminders(): Promise<void> {
-    console.log('[Scheduler] Checking for upcoming appointments...');
+    logger.debug('[Scheduler] Checking for upcoming appointments...');
     
     const now = new Date();
     const in24Hours = new Date(now.getTime() + 24 * 60 * 60 * 1000);
@@ -73,7 +74,7 @@ class AppointmentScheduler {
           )
         );
 
-      console.log(`[Scheduler] Found ${upcomingBookings.length} bookings needing reminders`);
+      logger.info('[Scheduler] Found bookings needing reminders', { count: upcomingBookings.length });
 
       for (const booking of upcomingBookings) {
         const success = await sendBookingReminder(booking.id);
@@ -85,12 +86,12 @@ class AppointmentScheduler {
         }
       }
     } catch (error) {
-      console.error('[Scheduler] Error sending reminders:', error);
+      logger.error('[Scheduler] Error sending reminders', { error: error instanceof Error ? error.message : 'Unknown' });
     }
   }
 
   async triggerReviewRequests(): Promise<void> {
-    console.log('[Scheduler] Checking for completed appointments...');
+    logger.debug('[Scheduler] Checking for completed appointments...');
     
     const now = new Date();
     
@@ -114,7 +115,7 @@ class AppointmentScheduler {
         .orderBy(bookings.bookingDate)
         .limit(10);
 
-      console.log(`[Scheduler] Found ${completedBookings.length} bookings needing review requests`);
+      logger.info('[Scheduler] Found bookings needing review requests', { count: completedBookings.length });
 
       for (const booking of completedBookings) {
         try {
@@ -136,20 +137,20 @@ class AppointmentScheduler {
                 .set(updateData)
                 .where(eq(bookings.id, booking.id));
             } catch (dbError) {
-              console.error(`[Scheduler] DB update failed for booking #${booking.id}:`, dbError);
+              logger.error('[Scheduler] DB update failed', { bookingId: booking.id, error: dbError instanceof Error ? dbError.message : 'Unknown' });
             }
           }
         } catch (err) {
-          console.error(`[Scheduler] Error processing booking #${booking.id}:`, err);
+          logger.error('[Scheduler] Error processing booking', { bookingId: booking.id, error: err instanceof Error ? err.message : 'Unknown' });
         }
       }
     } catch (error) {
-      console.error('[Scheduler] Error triggering review requests:', error);
+      logger.error('[Scheduler] Error triggering review requests', { error: error instanceof Error ? error.message : 'Unknown' });
     }
   }
 
   async runNow(): Promise<{ reminders: number; reviews: number }> {
-    console.log('[Scheduler] Running manual check...');
+    logger.info('[Scheduler] Running manual check...');
     await this.sendUpcomingReminders();
     await this.triggerReviewRequests();
     return { reminders: 0, reviews: 0 };

@@ -27,6 +27,7 @@ import multer from "multer";
 import path from "path";
 import fs from "fs";
 import bcrypt from "bcryptjs";
+import { logger, securityLogger, redactEmail } from "./logger";
 import {
   insertSpaSettingsSchema,
   insertServiceCategorySchema,
@@ -425,23 +426,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Check all conditions with same error message to prevent enumeration
       if (!user || !passwordMatch) {
+        await AuditLogger.logAuthFailed(req, email, "Invalid credentials");
         return res.status(401).json({ message: "Invalid credentials" });
       }
       
       // Check if user is admin or super_admin
       if (user.role !== 'admin' && user.role !== 'super_admin') {
+        await AuditLogger.logAuthFailed(req, email, "Non-admin role attempted admin login");
         return res.status(403).json({ message: "Access denied. Admin access required." });
       }
       
       // Check if user is approved
       if (user.status !== 'approved') {
+        await AuditLogger.logAuthFailed(req, email, "Account pending approval");
         return res.status(403).json({ message: "Your account is pending approval" });
       }
       
       // SECURITY: Regenerate session to prevent session fixation attacks
       req.session.regenerate((regenerateErr) => {
         if (regenerateErr) {
-          console.error('Session regeneration error:', regenerateErr);
+          logger.error('Session regeneration error', { error: regenerateErr instanceof Error ? regenerateErr.message : 'Unknown' });
           return res.status(500).json({ message: "Login failed" });
         }
         
@@ -452,12 +456,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         };
         (req.session as any).csrfToken = crypto.randomBytes(32).toString('hex');
         
-        req.session.save((saveErr) => {
+        req.session.save(async (saveErr) => {
           if (saveErr) {
-            console.error('Session save error:', saveErr);
+            logger.error('Session save error', { error: saveErr instanceof Error ? saveErr.message : 'Unknown' });
             return res.status(500).json({ message: "Login failed" });
           }
-          // Return CSRF token with login response so frontend can use it immediately
+          
+          await AuditLogger.logAuth(req, "LOGIN", user.id);
+          
           return res.json({ 
             success: true, 
             user,
@@ -466,7 +472,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       });
     } catch (error) {
-      console.error("Admin login error:", error);
+      logger.error("Admin login error", { error: error instanceof Error ? error.message : 'Unknown' });
       res.status(500).json({ message: "Login failed" });
     }
   });
@@ -609,7 +615,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Missing required fields" });
       }
       
-      console.log("Admin application submission:", { email, spaName, hasLicenseUrl: !!licenseUrl });
+      logger.info("Admin application submission", { email: redactEmail(email), spaName, hasLicenseUrl: !!licenseUrl });
       
       // Check if email already exists
       const existingUser = await storage.getUserByEmail(email);
@@ -623,7 +629,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const bcrypt = await import('bcryptjs');
       const hashedPassword = await bcrypt.hash(password, 10);
       
-      console.log("Creating new admin user and application...");
+      logger.debug("Creating new admin user and application");
       
       // Create new user with pending status
       const newUser = await storage.upsertUser({
@@ -642,7 +648,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         status: 'pending',
       });
       
-      console.log("Admin application created successfully for user:", newUser.id);
+      logger.info("Admin application created successfully", { userId: newUser.id });
       
       res.json({ 
         success: true, 
@@ -650,9 +656,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         pendingApproval: true
       });
     } catch (error) {
-      console.error("Admin register error:", error);
-      console.error("Error stack:", error instanceof Error ? error.stack : 'No stack trace');
-      res.status(500).json({ message: "Application submission failed", error: error instanceof Error ? error.message : "Unknown error" });
+      logger.error("Admin register error", { error: error instanceof Error ? error.message : 'Unknown error' });
+      res.status(500).json({ message: "Application submission failed" });
     }
   });
 
@@ -1637,25 +1642,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Update application status with reviewer info
       const userId = (req as any).user?.claims?.sub || (req as any).user?.id;
-      console.log('Approving application:', { applicationId: id, userId });
+      logger.info('Approving application', { applicationId: id, reviewerId: userId });
       
       await storage.updateAdminApplication(id, {
         status: 'approved',
         reviewedAt: new Date(),
         reviewedBy: userId,
       });
+      
+      await AuditLogger.logPrivilegeUse(req, 'approve_admin_application', application.userId, { applicationId: id, spaId: spa.id });
 
       res.json({ 
         message: "Admin application approved successfully",
         spaId: spa.id 
       });
     } catch (error) {
-      console.error('Detailed approval error:', {
-        error,
+      logger.error('Approval error', {
         errorCode: (error as any).code,
         errorMessage: (error as any).message,
-        errorDetail: (error as any).detail,
-        errorColumn: (error as any).column,
         applicationId: id,
       });
       handleRouteError(res, error, "Failed to approve admin application");
@@ -1678,7 +1682,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Update application status with reviewer info
       const userId = (req as any).user?.claims?.sub || (req as any).user?.id;
-      console.log('Rejecting application:', { applicationId: id, userId, reason });
+      logger.info('Rejecting application', { applicationId: id, reviewerId: userId, hasReason: !!reason });
       
       await storage.updateAdminApplication(id, {
         status: 'rejected',
@@ -1692,10 +1696,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         id: application.userId,
         status: 'rejected',
       } as any);
+      
+      await AuditLogger.logPrivilegeUse(req, 'reject_admin_application', application.userId, { applicationId: id, reason });
 
       res.json({ message: "Admin application rejected successfully" });
     } catch (error) {
-      console.error('Error rejecting application:', error);
+      logger.error('Error rejecting application', { error: error instanceof Error ? error.message : 'Unknown' });
       handleRouteError(res, error, "Failed to reject admin application");
     }
   });
@@ -1908,22 +1914,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const settings = await storage.getSpaSettings();
       res.json(settings);
     } catch (error) {
-      console.error("Error fetching spa settings:", error);
+      logger.error("Error fetching spa settings", { error: error instanceof Error ? error.message : 'Unknown' });
       res.status(500).json({ message: "Failed to fetch spa settings" });
     }
   });
 
   app.put("/api/admin/settings", isAdmin, async (req, res) => {
     try {
-      console.log("PUT /api/admin/settings - Request body:", JSON.stringify(req.body, null, 2));
-      // Use partial schema for updates to allow partial updates
+      logger.debug("PUT /api/admin/settings - updating settings");
       const validatedData = insertSpaSettingsSchema.partial().parse(req.body);
-      console.log("PUT /api/admin/settings - Validated data:", JSON.stringify(validatedData, null, 2));
       const settings = await storage.updateSpaSettings(validatedData as any);
-      console.log("PUT /api/admin/settings - Updated settings:", JSON.stringify(settings, null, 2));
+      logger.info("Spa settings updated successfully");
       res.json(settings);
     } catch (error) {
-      console.error("PUT /api/admin/settings - Error:", error);
+      logger.error("PUT /api/admin/settings - Error", { error: error instanceof Error ? error.message : 'Unknown' });
       res.status(500).json({ message: "Failed to update spa settings" });
     }
   });
@@ -1947,7 +1951,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         vatRegistrationDate: spa.vatRegistrationDate || null,
       });
     } catch (error) {
-      console.error("Error fetching VAT settings:", error);
+      logger.error("Error fetching VAT settings", { error: error instanceof Error ? error.message : 'Unknown' });
       res.status(500).json({ message: "Failed to fetch VAT settings" });
     }
   });
@@ -5154,6 +5158,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const filename = `finance-summary-${formatDate(start)}-to-${formatDate(end)}`;
       
+      await AuditLogger.logExport(req, 'finance-summary', exportData.length, format, spaId);
+      
       if (format === 'csv') {
         await exportToCSV(
           exportData,
@@ -5618,10 +5624,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         deliveredAt: MessageStatus === 'delivered' ? new Date() : null,
       });
       
-      console.log(`📥 Twilio webhook: ${MessageSid} - ${MessageStatus}`);
+      logger.debug('Twilio webhook received', { messageSid: MessageSid, status: MessageStatus });
       res.status(200).send('OK');
     } catch (error) {
-      console.error('Twilio webhook error:', error);
+      logger.error('Twilio webhook error', { error: error instanceof Error ? error.message : 'Unknown' });
       res.status(500).send('Error');
     }
   });
@@ -5631,7 +5637,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { MessageSid, From, To, Body, ButtonPayload, ListId, ListTitle } = req.body;
       
-      console.log(`📱 WhatsApp Inbound: From ${From} - "${Body?.substring(0, 50)}..."`);
+      logger.debug('WhatsApp inbound message', { from: From, hasBody: !!Body });
       
       // Import and use the WhatsApp booking service
       const { whatsappBookingService } = await import('./whatsappBookingService');
@@ -5650,7 +5656,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Twilio expects TwiML response or empty 200
       res.status(200).send('');
     } catch (error) {
-      console.error('WhatsApp inbound webhook error:', error);
+      logger.error('WhatsApp inbound webhook error', { error: error instanceof Error ? error.message : 'Unknown' });
       res.status(500).send('Error');
     }
   });
@@ -5667,10 +5673,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         deliveredAt: status === 'DELIVRD' ? new Date() : null,
       });
       
-      console.log(`📥 MSG91 webhook: ${requestId} - ${status}`);
+      logger.debug('MSG91 webhook received', { requestId, status });
       res.status(200).send('OK');
     } catch (error) {
-      console.error('MSG91 webhook error:', error);
+      logger.error('MSG91 webhook error', { error: error instanceof Error ? error.message : 'Unknown' });
       res.status(500).send('Error');
     }
   });

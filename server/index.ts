@@ -7,6 +7,7 @@ import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { validateEnvironment } from "./validateEnv";
 import { appointmentScheduler } from "./appointmentScheduler";
+import { logger } from "./logger";
 
 // Validate environment variables on startup
 validateEnvironment();
@@ -78,7 +79,7 @@ app.post('/api/webhooks/stripe', express.raw({ type: 'application/json' }), asyn
     const signature = req.headers['stripe-signature'] as string;
     
     if (!signature) {
-      console.log('[Stripe Webhook] Missing signature');
+      logger.warn('[Stripe Webhook] Missing signature');
       return res.status(400).json({ error: 'Missing stripe-signature header' });
     }
 
@@ -91,7 +92,7 @@ app.post('/api/webhooks/stripe', express.raw({ type: 'application/json' }), asyn
       res.status(400).json({ error: result.error });
     }
   } catch (error: any) {
-    console.error('[Stripe Webhook] Error:', error.message);
+    logger.error('[Stripe Webhook] Error', { error: error.message });
     res.status(500).json({ error: 'Webhook processing failed' });
   }
 });

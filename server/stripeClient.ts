@@ -1,4 +1,5 @@
 import Stripe from 'stripe';
+import { logger } from './logger';
 
 let connectionSettings: any;
 
@@ -84,7 +85,7 @@ export async function createPaymentLink(bookingId: number, amount: number, spaNa
     const baseUrl = process.env.APP_URL || (domains ? `https://${domains}` : null);
     
     if (!baseUrl) {
-      console.log('[Stripe] No APP_URL or REPLIT_DOMAINS configured, skipping payment link');
+      logger.warn('[Stripe] No APP_URL or REPLIT_DOMAINS configured, skipping payment link');
       return null;
     }
 
@@ -114,7 +115,7 @@ export async function createPaymentLink(bookingId: number, amount: number, spaNa
     
     return session.url;
   } catch (error: any) {
-    console.error('Failed to create payment link:', error?.message || error);
+    logger.error('Failed to create payment link', { error: error?.message || 'Unknown' });
     return null;
   }
 }
