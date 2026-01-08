@@ -215,6 +215,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware setup
   await setupAuth(app);
 
+  // Apply rate limiting to all API routes (prevents DoS and brute force attacks)
+  app.use('/api', apiLimiter);
+
   // CSRF Protection - ensure token exists in session, then validate on state-changing requests
   app.use('/api', ensureCsrfToken, validateCsrf);
 
