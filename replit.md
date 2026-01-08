@@ -30,7 +30,12 @@ The backend utilizes a PostgreSQL database and an Express-based REST API.
 -   **Calendar Validation:** Ensures accurate time slot generation based on business hours, service durations, and staff availability.
 -   **Multi-Provider Notification System:** Supports Twilio and MSG91 for Email, SMS, and WhatsApp notifications, with AES-256-GCM encryption for credentials and per-spa provider selection. Staff notifications are also configurable.
 -   **Audit Trail:** Tracks all significant changes with user context, IP, and user agent.
--   **Security Hardening (Updated 2026-01-07):**
+-   **Security Hardening (Updated 2026-01-08):**
+    - **CSRF Protection:** Session-bound synchronizer token pattern with X-CSRF-Token header validation. Tokens generated during login and included in all state-changing requests. Exempt routes: webhooks, Firebase auth, login/register endpoints.
+    - **Session Fixation Prevention:** Session regeneration (req.session.regenerate) on both Firebase and email/password login flows.
+    - **Email Enumeration Prevention:** Constant-time bcrypt comparison using dummy hash for non-existent users.
+    - **OAuth CSRF Protection:** HMAC-SHA256 signed state parameter for OAuth flows using SESSION_SECRET.
+    - **File Upload Hardening:** Symlink resolution (fs.realpathSync) before path validation to prevent traversal attacks.
     - **Rate Limiting:** Login (5 per 15 min), booking (10 per min), API (100 per min) to prevent brute force and DoS
     - **Helmet Security Headers:** CSP, XSS protection, HSTS, and other security headers
     - **Multi-Tenant Data Isolation:** All tables (services, staff, products, customers, bookings) filter by spaId with database-level enforcement
@@ -42,6 +47,7 @@ The backend utilizes a PostgreSQL database and an Express-based REST API.
     - **Environment Validation:** Required secrets (ENCRYPTION_KEY, DATABASE_URL) validated at startup
     - **Secure ID Validation:** All numeric ID params validated with parseNumericId helper
     - **Centralized Error Handling:** DomainError class and handleRouteError for consistent error responses
+    - **TRN Validation:** UAE Tax Registration Number validated with 15-digit format regex
 -   **Admin-Spa Linkage & Onboarding:** Robust middleware (`injectAdminSpa`) links admin users to their specific spa. A pending approval workflow and a 6-step setup wizard ensure new admins configure their spa before accessing full features. The wizard covers Basic Info, Location, Business Hours, Services, Staff, and Activation.
 -   **Membership Management:** CRUD operations for memberships/packages, supporting one-time/recurring payments, limited/unlimited sessions, validity periods, and online sales toggles. Integrates with invoicing for revenue tracking.
 -   **Finance & Accounting Reporting:** Comprehensive dashboard with 5 report types: Finance Summary, Sales Summary, Sales List, Appointments Summary, and Payment Summary. Includes date range filters, sortable columns, and planned export functionality (CSV, Excel, PDF).
