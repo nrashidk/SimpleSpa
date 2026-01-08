@@ -4,6 +4,9 @@ import type { Express, RequestHandler } from "express";
 import connectPg from "connect-pg-simple";
 import { storage } from "./storage";
 import { AuditLogger } from "./auditLog";
+import bcrypt from "bcryptjs";
+import crypto from "crypto";
+import { otpRequestLimiter, otpVerifyLimiter } from "./index";
 
 let firebaseInitialized = false;
 
@@ -145,6 +148,344 @@ export async function setupAuth(app: Express) {
       }
       res.redirect("/");
     });
+  });
+
+  // DUMMY_PASSWORD_HASH for constant-time comparison (prevents email enumeration)
+  const DUMMY_PASSWORD_HASH = '$2b$10$2NHsfc5kq84lGXf/Glaa2uaU47qlqt9JGX0r3w53bbZOUDM9ir2hm';
+
+  // Password validation helper for customers
+  function validateCustomerPassword(password: string): { valid: boolean; message?: string } {
+    if (!password || password.length < 8) {
+      return { valid: false, message: "Password must be at least 8 characters." };
+    }
+    if (password.length > 128) {
+      return { valid: false, message: "Password must be 128 characters or less." };
+    }
+    return { valid: true };
+  }
+
+  // Phone validation helper
+  function validatePhone(phone: string): { valid: boolean; normalized?: string; message?: string } {
+    const normalized = phone.replace(/[\s\-\(\)]/g, '').trim();
+    if (!/^\+?[1-9]\d{7,14}$/.test(normalized)) {
+      return { valid: false, message: "Invalid phone number format. Use international format like +971501234567" };
+    }
+    return { valid: true, normalized };
+  }
+
+  // Customer email/password registration
+  app.post("/api/auth/customer/register", async (req, res) => {
+    try {
+      const { email, password, firstName, lastName, phone } = req.body;
+
+      if (!email || !password) {
+        return res.status(400).json({ message: "Email and password are required" });
+      }
+
+      // Validate email format
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return res.status(400).json({ message: "Invalid email format" });
+      }
+
+      // Validate password
+      const passwordValidation = validateCustomerPassword(password);
+      if (!passwordValidation.valid) {
+        return res.status(400).json({ message: passwordValidation.message });
+      }
+
+      // Check if email already exists
+      const existingUser = await storage.getUserByEmail(email);
+      if (existingUser) {
+        return res.status(409).json({ message: "An account with this email already exists" });
+      }
+
+      // Check if phone already exists
+      if (phone) {
+        const phoneValidation = validatePhone(phone);
+        if (!phoneValidation.valid) {
+          return res.status(400).json({ message: phoneValidation.message });
+        }
+        const existingPhoneUser = await storage.getUserByPhone(phoneValidation.normalized!);
+        if (existingPhoneUser) {
+          return res.status(409).json({ message: "An account with this phone number already exists" });
+        }
+      }
+
+      // Hash password and create user
+      const hashedPassword = await bcrypt.hash(password, 10);
+      const newUser = await storage.upsertUser({
+        email: email.toLowerCase().trim(),
+        phone: phone ? phone.replace(/[\s\-\(\)]/g, '').trim() : undefined,
+        password: hashedPassword,
+        firstName: firstName || "",
+        lastName: lastName || "",
+        role: "customer",
+        status: "approved",
+      });
+
+      // Create session for the new user
+      const expiresAt = Math.floor(Date.now() / 1000) + (7 * 24 * 60 * 60);
+      
+      req.session.regenerate((regenerateErr) => {
+        if (regenerateErr) {
+          console.error('Session regeneration error:', regenerateErr);
+          return res.status(500).json({ message: "Registration failed" });
+        }
+
+        (req.session as any).user = {
+          claims: { sub: newUser.id, email: newUser.email },
+          expires_at: expiresAt,
+        };
+        (req.session as any).csrfToken = crypto.randomBytes(32).toString('hex');
+
+        req.session.save(async (saveErr) => {
+          if (saveErr) {
+            console.error('Session save error:', saveErr);
+            return res.status(500).json({ message: "Registration failed" });
+          }
+
+          await AuditLogger.logAuth(req, "REGISTER", newUser.id);
+
+          res.json({
+            success: true,
+            user: {
+              id: newUser.id,
+              email: newUser.email,
+              firstName: newUser.firstName,
+              lastName: newUser.lastName,
+            },
+            csrfToken: (req.session as any).csrfToken,
+          });
+        });
+      });
+    } catch (error) {
+      console.error("Customer registration error:", error);
+      res.status(500).json({ message: "Registration failed" });
+    }
+  });
+
+  // Customer email/password login
+  app.post("/api/auth/customer/login", async (req, res) => {
+    try {
+      const { email, password } = req.body;
+
+      if (!email || !password) {
+        return res.status(400).json({ message: "Email and password are required" });
+      }
+
+      // Look up user by email
+      const user = await storage.getUserByEmail(email);
+
+      // SECURITY: Always run bcrypt comparison even if user doesn't exist
+      const passwordToCheck = user?.password || DUMMY_PASSWORD_HASH;
+      const passwordMatch = await bcrypt.compare(password, passwordToCheck);
+
+      if (!user || !passwordMatch) {
+        await AuditLogger.logAuthFailed(req, email, "Invalid credentials");
+        return res.status(401).json({ message: "Invalid email or password" });
+      }
+
+      // Create session
+      const expiresAt = Math.floor(Date.now() / 1000) + (7 * 24 * 60 * 60);
+
+      req.session.regenerate((regenerateErr) => {
+        if (regenerateErr) {
+          console.error('Session regeneration error:', regenerateErr);
+          return res.status(500).json({ message: "Login failed" });
+        }
+
+        (req.session as any).user = {
+          claims: { sub: user.id, email: user.email },
+          expires_at: expiresAt,
+        };
+        (req.session as any).csrfToken = crypto.randomBytes(32).toString('hex');
+
+        req.session.save(async (saveErr) => {
+          if (saveErr) {
+            console.error('Session save error:', saveErr);
+            return res.status(500).json({ message: "Login failed" });
+          }
+
+          await AuditLogger.logAuth(req, "LOGIN", user.id);
+
+          res.json({
+            success: true,
+            user: {
+              id: user.id,
+              email: user.email,
+              firstName: user.firstName,
+              lastName: user.lastName,
+            },
+            csrfToken: (req.session as any).csrfToken,
+          });
+        });
+      });
+    } catch (error) {
+      console.error("Customer login error:", error);
+      res.status(500).json({ message: "Login failed" });
+    }
+  });
+
+  // OTP storage (in-memory for simplicity - in production use Redis or database)
+  const otpStore = new Map<string, { otp: string; expiresAt: number; attempts: number }>();
+
+  // Customer phone OTP request - Rate limited to prevent SMS flooding
+  app.post("/api/auth/customer/phone/request-otp", otpRequestLimiter, async (req, res) => {
+    try {
+      const { phone } = req.body;
+
+      if (!phone) {
+        return res.status(400).json({ message: "Phone number is required" });
+      }
+
+      const phoneValidation = validatePhone(phone);
+      if (!phoneValidation.valid) {
+        return res.status(400).json({ message: phoneValidation.message });
+      }
+
+      const normalizedPhone = phoneValidation.normalized!;
+
+      // Generate 6-digit OTP
+      const otp = Math.floor(100000 + Math.random() * 900000).toString();
+      const expiresAt = Date.now() + (10 * 60 * 1000); // 10 minutes
+
+      // Store OTP
+      otpStore.set(normalizedPhone, { otp, expiresAt, attempts: 0 });
+
+      // TODO: Send OTP via SMS using Twilio (if configured)
+      // For now, log it in development
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`[DEV] OTP for ${normalizedPhone}: ${otp}`);
+      }
+
+      // Try to send via Twilio if available
+      try {
+        const twilioClient = require('twilio');
+        const accountSid = process.env.TWILIO_ACCOUNT_SID;
+        const authToken = process.env.TWILIO_AUTH_TOKEN;
+        const twilioPhone = process.env.TWILIO_PHONE_NUMBER;
+
+        if (accountSid && authToken && twilioPhone) {
+          const client = twilioClient(accountSid, authToken);
+          await client.messages.create({
+            body: `Your verification code is: ${otp}`,
+            from: twilioPhone,
+            to: normalizedPhone,
+          });
+          console.log(`OTP sent to ${normalizedPhone} via Twilio`);
+        }
+      } catch (smsError) {
+        console.log("SMS sending not available:", smsError);
+      }
+
+      res.json({
+        success: true,
+        message: "Verification code sent",
+        // In development, return OTP for testing
+        ...(process.env.NODE_ENV === 'development' && { devOtp: otp }),
+      });
+    } catch (error) {
+      console.error("Phone OTP request error:", error);
+      res.status(500).json({ message: "Failed to send verification code" });
+    }
+  });
+
+  // Customer phone OTP verify - Rate limited to prevent brute force
+  app.post("/api/auth/customer/phone/verify-otp", otpVerifyLimiter, async (req, res) => {
+    try {
+      const { phone, otp, firstName, lastName } = req.body;
+
+      if (!phone || !otp) {
+        return res.status(400).json({ message: "Phone and OTP are required" });
+      }
+
+      const phoneValidation = validatePhone(phone);
+      if (!phoneValidation.valid) {
+        return res.status(400).json({ message: phoneValidation.message });
+      }
+
+      const normalizedPhone = phoneValidation.normalized!;
+      const storedOtp = otpStore.get(normalizedPhone);
+
+      if (!storedOtp) {
+        return res.status(400).json({ message: "No verification code found. Please request a new one." });
+      }
+
+      if (Date.now() > storedOtp.expiresAt) {
+        otpStore.delete(normalizedPhone);
+        return res.status(400).json({ message: "Verification code expired. Please request a new one." });
+      }
+
+      storedOtp.attempts++;
+      if (storedOtp.attempts > 5) {
+        otpStore.delete(normalizedPhone);
+        return res.status(429).json({ message: "Too many attempts. Please request a new code." });
+      }
+
+      if (storedOtp.otp !== otp) {
+        return res.status(400).json({ message: "Invalid verification code" });
+      }
+
+      // OTP verified, delete from store
+      otpStore.delete(normalizedPhone);
+
+      // Find or create user by phone
+      let user = await storage.getUserByPhone(normalizedPhone);
+      
+      if (!user) {
+        // Create new user
+        user = await storage.upsertUser({
+          phone: normalizedPhone,
+          firstName: firstName || "",
+          lastName: lastName || "",
+          role: "customer",
+          status: "approved",
+          phoneVerified: true,
+        });
+      } else {
+        // Update phone verified status
+        await storage.updateUserPhoneVerified(user.id, true);
+      }
+
+      // Create session
+      const expiresAt = Math.floor(Date.now() / 1000) + (7 * 24 * 60 * 60);
+
+      req.session.regenerate((regenerateErr) => {
+        if (regenerateErr) {
+          console.error('Session regeneration error:', regenerateErr);
+          return res.status(500).json({ message: "Verification failed" });
+        }
+
+        (req.session as any).user = {
+          claims: { sub: user!.id, email: user!.email, phone: user!.phone },
+          expires_at: expiresAt,
+        };
+        (req.session as any).csrfToken = crypto.randomBytes(32).toString('hex');
+
+        req.session.save(async (saveErr) => {
+          if (saveErr) {
+            console.error('Session save error:', saveErr);
+            return res.status(500).json({ message: "Verification failed" });
+          }
+
+          await AuditLogger.logAuth(req, "LOGIN", user!.id);
+
+          res.json({
+            success: true,
+            user: {
+              id: user!.id,
+              phone: user!.phone,
+              firstName: user!.firstName,
+              lastName: user!.lastName,
+            },
+            csrfToken: (req.session as any).csrfToken,
+          });
+        });
+      });
+    } catch (error) {
+      console.error("Phone OTP verify error:", error);
+      res.status(500).json({ message: "Verification failed" });
+    }
   });
 }
 

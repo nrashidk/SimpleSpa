@@ -18,6 +18,7 @@ export const sessions = pgTable(
 export const users = pgTable("users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   email: varchar("email").unique(),
+  phone: varchar("phone").unique(), // Mobile phone for phone-based auth
   password: varchar("password"), // Hashed password for email/password login
   firstName: varchar("first_name"),
   lastName: varchar("last_name"),
@@ -25,6 +26,8 @@ export const users = pgTable("users", {
   role: text("role").notNull().default("customer"), // customer, staff, admin, super_admin
   status: text("status").notNull().default("approved"), // pending, approved, rejected (for admin registrations)
   adminSpaId: integer("admin_spa_id"), // Links admin users to their spa
+  phoneVerified: boolean("phone_verified").default(false), // Whether phone is verified via OTP
+  emailVerified: boolean("email_verified").default(false), // Whether email is verified
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

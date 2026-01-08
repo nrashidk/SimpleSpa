@@ -72,6 +72,22 @@ export const bookingLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+export const otpRequestLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 3, // 3 OTP requests per 15 minutes per IP
+  message: { message: "Too many OTP requests, please try again later" },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+export const otpVerifyLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10, // 10 OTP verification attempts per 15 minutes
+  message: { message: "Too many verification attempts, please try again later" },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 // CRITICAL: Register Stripe webhook BEFORE express.json() middleware
 // Stripe requires raw body for signature verification
 app.post('/api/webhooks/stripe', express.raw({ type: 'application/json' }), async (req, res) => {
@@ -115,6 +131,10 @@ const CSRF_EXEMPT_ROUTES = [
   '/api/webhooks/whatsapp',
   '/api/webhooks/twilio',
   '/api/auth/firebase', // Firebase token auth has its own verification
+  '/api/auth/customer/register', // Customer registration - pre-authentication
+  '/api/auth/customer/login', // Customer login - pre-authentication
+  '/api/auth/customer/phone/request-otp', // Phone OTP request - pre-authentication
+  '/api/auth/customer/phone/verify-otp', // Phone OTP verify - pre-authentication
   '/api/admin/login', // Login endpoint - pre-authentication, protected by rate limiting
   '/api/admin/register', // Registration endpoint - pre-authentication
   '/api/admin/apply', // Admin application - pre-authentication

@@ -111,8 +111,10 @@ export interface IStorage {
   // User operations (required for Replit Auth)
   getUser(id: string): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
+  getUserByPhone(phone: string): Promise<User | undefined>;
   upsertUser(user: UpsertUser): Promise<User>;
   updateUserPassword(userId: string, hashedPassword: string): Promise<void>;
+  updateUserPhoneVerified(userId: string, verified: boolean): Promise<void>;
 
   // Admin Application operations
   createAdminApplication(application: InsertAdminApplication): Promise<AdminApplication>;
@@ -423,6 +425,20 @@ export class DatabaseStorage implements IStorage {
     await db
       .update(users)
       .set({ password: hashedPassword, updatedAt: new Date() })
+      .where(eq(users.id, userId));
+  }
+
+  async getUserByPhone(phone: string): Promise<User | undefined> {
+    const normalizedPhone = phone.replace(/\s/g, '').trim();
+    const [user] = await db.select().from(users)
+      .where(eq(users.phone, normalizedPhone));
+    return user;
+  }
+
+  async updateUserPhoneVerified(userId: string, verified: boolean): Promise<void> {
+    await db
+      .update(users)
+      .set({ phoneVerified: verified, updatedAt: new Date() })
       .where(eq(users.id, userId));
   }
 
