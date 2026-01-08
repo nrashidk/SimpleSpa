@@ -41,6 +41,7 @@ The backend utilizes a PostgreSQL database and an Express-based REST API.
     - **Multi-Tenant Data Isolation:** All tables (services, staff, products, customers, bookings) filter by spaId with database-level enforcement
     - **IDOR Protection:** All DELETE/UPDATE endpoints verify resource ownership before mutation
     - **Strong Password Policy:** 12+ characters with uppercase, lowercase, numbers, and special characters
+    - **Password Change (Added 2026-01-08):** Secure password change endpoint at PUT /api/admin/change-password with current password verification, full password policy validation, and audit logging
     - **Session Security:** SameSite=lax cookies, session regeneration on auth state changes
     - **Input Validation:** Zod schemas for all API endpoints including public booking validation
     - **XSS Protection:** React output encoding (automatic) + helmet CSP headers
