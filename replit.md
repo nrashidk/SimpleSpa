@@ -45,6 +45,7 @@ The backend utilizes a PostgreSQL database and an Express-based REST API.
     - **IDOR Protection:** All DELETE/UPDATE endpoints verify resource ownership before mutation
     - **Strong Password Policy:** 12+ characters with uppercase, lowercase, numbers, and special characters
     - **Password Change (Added 2026-01-08):** Secure password change endpoint at PUT /api/admin/change-password with current password verification, full password policy validation, and audit logging
+    - **Password Reset (Added 2026-01-08):** Secure admin password reset flow with POST /api/admin/forgot-password and POST /api/admin/reset-password endpoints. Features SHA-256 token hashing, 1-hour token expiry, email enumeration prevention (constant response), and rate limiting. UI pages at /admin/forgot-password and /admin/reset-password.
     - **Session Security:** SameSite=lax cookies, session regeneration on auth state changes
     - **Input Validation:** Zod schemas for all API endpoints including public booking validation
     - **XSS Protection:** React output encoding (automatic) + helmet CSP headers
