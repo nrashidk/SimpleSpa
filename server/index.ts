@@ -1,6 +1,7 @@
 import express, { type Request, Response, NextFunction } from "express";
 import rateLimit from "express-rate-limit";
 import helmet from "helmet";
+import cors from "cors";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { validateEnvironment } from "./validateEnv";
@@ -10,6 +11,32 @@ import { appointmentScheduler } from "./appointmentScheduler";
 validateEnvironment();
 
 const app = express();
+
+// CORS configuration - restrict to allowed origins
+const allowedOrigins = process.env.CORS_ORIGIN?.split(',') || [];
+const isProduction = process.env.NODE_ENV === 'production';
+
+app.use(cors({
+  origin: (origin, callback) => {
+    // Allow requests with no origin (mobile apps, Postman, same-origin)
+    if (!origin) return callback(null, true);
+    
+    // In development, allow localhost origins
+    if (!isProduction && (origin.includes('localhost') || origin.includes('127.0.0.1') || origin.includes('.replit.dev'))) {
+      return callback(null, true);
+    }
+    
+    // In production, only allow configured origins
+    if (allowedOrigins.length === 0 || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token'],
+}));
 
 // Security headers (configured for development and production)
 app.use(helmet({
