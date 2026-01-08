@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { Sparkles, Upload, FileText, CheckCircle2, Loader2, Clock, CheckCircle, XCircle } from "lucide-react";
+import { setCsrfToken } from "@/lib/queryClient";
 
 type AuthStatus = {
   isAuthenticated: boolean;
@@ -77,6 +78,11 @@ export default function AdminLogin() {
       }
 
       const loginData = await response.json();
+      
+      // Update CSRF token from login response
+      if (loginData.csrfToken) {
+        setCsrfToken(loginData.csrfToken);
+      }
       
       // Super admins bypass setup wizard and go straight to admin panel
       if (loginData.user?.role === 'super_admin') {

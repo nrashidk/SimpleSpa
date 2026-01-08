@@ -39,6 +39,12 @@ export function clearCsrfToken() {
   csrfTokenPromise = null;
 }
 
+// Set CSRF token directly (call after login with token from response)
+export function setCsrfToken(token: string) {
+  csrfToken = token;
+  csrfTokenPromise = null;
+}
+
 export async function apiRequest(
   method: string,
   url: string,

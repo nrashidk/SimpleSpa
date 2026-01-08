@@ -3,7 +3,7 @@ import { createServer, type Server } from "http";
 import crypto from "crypto";
 import { storage } from "./storage";
 import { setupAuth, isAuthenticated, isAdmin, isSuperAdmin, injectAdminSpa, enforceSetupWizard, ensureSetupComplete } from "./firebaseAuth";
-import { loginLimiter, bookingLimiter, apiLimiter, validateCsrf } from "./index";
+import { loginLimiter, bookingLimiter, apiLimiter, validateCsrf, ensureCsrfToken } from "./index";
 import { generateAvailableTimeSlots, validateBooking } from "./timeSlotService";
 import { notificationService } from "./notificationService";
 import { requireStaff, requireStaffRole, getStaffByUserId, canViewStaffCalendar, canEditAppointments, canAccessDashboard } from "./staffPermissions";
@@ -55,7 +55,9 @@ function verifyOAuthState(state: string): { valid: boolean; data?: any } {
 }
 
 // Dummy password hash for constant-time comparison (prevents email enumeration)
-const DUMMY_PASSWORD_HASH = '$2a$10$dummyhashtopreventtimingattacksenumeration';
+// This is a valid bcrypt hash of a random string - actual value doesn't matter
+// We just need bcrypt.compare to run the same amount of work for non-existent users
+const DUMMY_PASSWORD_HASH = '$2b$10$2NHsfc5kq84lGXf/Glaa2uaU47qlqt9JGX0r3w53bbZOUDM9ir2hm';
 
 import {
   insertSpaSettingsSchema,
@@ -213,8 +215,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware setup
   await setupAuth(app);
 
-  // CSRF Protection - apply to all API routes after session setup
-  app.use('/api', validateCsrf);
+  // CSRF Protection - ensure token exists in session, then validate on state-changing requests
+  app.use('/api', ensureCsrfToken, validateCsrf);
 
   // CSRF Token endpoint - returns the session-bound CSRF token
   app.get('/api/csrf-token', (req, res) => {
@@ -397,18 +399,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(500).json({ message: "Login failed" });
         }
         
-        // Restore any needed session data and set user
+        // Set user data and create new CSRF token after session regeneration
         (req.session as any).user = {
           claims: { sub: user.id, email: user.email },
           expires_at: Math.floor(Date.now() / 1000) + 86400, // 24 hours
         };
+        (req.session as any).csrfToken = crypto.randomBytes(32).toString('hex');
         
         req.session.save((saveErr) => {
           if (saveErr) {
             console.error('Session save error:', saveErr);
             return res.status(500).json({ message: "Login failed" });
           }
-          return res.json({ success: true, user });
+          // Return CSRF token with login response so frontend can use it immediately
+          return res.json({ 
+            success: true, 
+            user,
+            csrfToken: (req.session as any).csrfToken
+          });
         });
       });
     } catch (error) {

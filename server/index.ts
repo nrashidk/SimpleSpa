@@ -108,12 +108,15 @@ app.use(express.urlencoded({ extended: false }));
 // data (O'Brien -> O&#x27;Brien). Output encoding is the correct approach.
 
 // CSRF Protection - Session-bound synchronizer token pattern
-// Routes that are exempt from CSRF protection (webhooks, etc.)
+// Routes that are exempt from CSRF protection (webhooks, pre-auth endpoints)
 const CSRF_EXEMPT_ROUTES = [
   '/api/webhooks/stripe',
   '/api/webhooks/whatsapp',
   '/api/webhooks/twilio',
   '/api/auth/firebase', // Firebase token auth has its own verification
+  '/api/admin/login', // Login endpoint - pre-authentication, protected by rate limiting
+  '/api/admin/register', // Registration endpoint - pre-authentication
+  '/api/admin/apply', // Admin application - pre-authentication
 ];
 
 // Middleware to ensure CSRF token exists in session
@@ -131,20 +134,17 @@ function validateCsrf(req: Request, res: Response, next: NextFunction) {
     return next();
   }
   
-  // Skip for exempt routes
-  if (CSRF_EXEMPT_ROUTES.some(route => req.path.startsWith(route))) {
+  // Skip for exempt routes - use originalUrl which includes full path
+  if (CSRF_EXEMPT_ROUTES.some(route => req.originalUrl.startsWith(route))) {
     return next();
   }
   
-  // Skip if no session (unauthenticated requests)
-  if (!(req.session as any).csrfToken) {
-    return next();
-  }
-  
+  // At this point ensureCsrfToken has run, so session token should exist
+  // Validate the token - reject if missing or mismatched
   const token = req.headers['x-csrf-token'] as string;
   const sessionToken = (req.session as any).csrfToken;
   
-  if (!token || token !== sessionToken) {
+  if (!sessionToken || !token || token !== sessionToken) {
     return res.status(403).json({ message: 'Invalid CSRF token' });
   }
   

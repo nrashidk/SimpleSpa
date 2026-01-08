@@ -91,6 +91,8 @@ export async function setupAuth(app: Express) {
           return res.status(500).json({ message: "Login failed" });
         }
         
+        // Set user data and create new CSRF token after session regeneration
+        const crypto = require('crypto');
         (req.session as any).user = {
           claims: {
             sub: firebaseUser.uid,
@@ -99,6 +101,7 @@ export async function setupAuth(app: Express) {
           expires_at: expiresAt,
           firebaseAuth: true,
         };
+        (req.session as any).csrfToken = crypto.randomBytes(32).toString('hex');
 
         req.session.save(async (saveErr) => {
           if (saveErr) {
@@ -108,13 +111,15 @@ export async function setupAuth(app: Express) {
           
           await AuditLogger.logAuth(req, "LOGIN", firebaseUser.uid);
 
+          // Return CSRF token with login response so frontend can use it immediately
           res.json({ 
             success: true, 
             user: {
               id: firebaseUser.uid,
               email: firebaseUser.email,
               name: firebaseUser.name,
-            }
+            },
+            csrfToken: (req.session as any).csrfToken
           });
         });
       });

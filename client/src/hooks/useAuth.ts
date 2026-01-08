@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState, useCallback } from "react";
 import type { User } from "@shared/schema";
 import { auth, onAuthChange, onTokenChange, logOut, type User as FirebaseUser } from "@/lib/firebase";
+import { setCsrfToken, clearCsrfToken } from "@/lib/queryClient";
 
 export function useAuth() {
   const queryClient = useQueryClient();
@@ -21,6 +22,11 @@ export function useAuth() {
           });
           
           if (response.ok) {
+            const data = await response.json();
+            // Update CSRF token from login response
+            if (data.csrfToken) {
+              setCsrfToken(data.csrfToken);
+            }
             queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
           }
         }
@@ -56,6 +62,7 @@ export function useAuth() {
   });
 
   const logout = async () => {
+    clearCsrfToken();
     await logOut();
     window.location.href = "/api/logout";
   };
