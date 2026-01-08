@@ -219,12 +219,16 @@ export class AuditLogger {
 
   /**
    * Log failed authentication attempts
+   * Note: Emails are hashed for privacy - only store hash for correlation, not identification
    */
   static async logAuthFailed(
     req: Request,
     email: string,
     reason: string
   ): Promise<void> {
+    const crypto = await import('crypto');
+    const emailHash = crypto.createHash('sha256').update(email.toLowerCase().trim()).digest('hex').substring(0, 16);
+    
     await this.log({
       userId: undefined,
       action: "AUTH_FAILED",
@@ -232,7 +236,7 @@ export class AuditLogger {
       entityId: 0,
       changes: {
         after: {
-          email: email.replace(/(?<=.{2}).(?=.*@)/g, '*'),
+          emailHash,
           reason,
           timestamp: new Date().toISOString(),
         },
