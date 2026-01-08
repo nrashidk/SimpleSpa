@@ -661,6 +661,51 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Change password endpoint for authenticated admins
+  app.put('/api/admin/change-password', isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const user = req.user as any;
+      const userId = user.claims?.sub || user.id;
+      const { currentPassword, newPassword } = req.body;
+
+      if (!currentPassword || !newPassword) {
+        return res.status(400).json({ message: "Current password and new password are required" });
+      }
+
+      // Get the user from database
+      const dbUser = await storage.getUser(userId);
+      if (!dbUser) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      // Verify current password
+      if (!dbUser.password) {
+        return res.status(400).json({ message: "No password set for this account. Please contact support." });
+      }
+
+      const passwordMatch = await bcrypt.compare(currentPassword, dbUser.password);
+      if (!passwordMatch) {
+        return res.status(401).json({ message: "Current password is incorrect" });
+      }
+
+      // Validate new password strength
+      const passwordValidation = validatePassword(newPassword);
+      if (!passwordValidation.valid) {
+        return res.status(400).json({ message: passwordValidation.message });
+      }
+
+      // Hash and update password
+      const hashedPassword = await bcrypt.hash(newPassword, 10);
+      await storage.updateUserPassword(userId, hashedPassword);
+
+      logger.info("Password changed successfully", { userId });
+      res.json({ success: true, message: "Password changed successfully" });
+    } catch (error) {
+      logger.error("Change password error", { error: error instanceof Error ? error.message : 'Unknown error' });
+      res.status(500).json({ message: "Failed to change password" });
+    }
+  });
+
   // ===== SETUP WIZARD ENFORCEMENT =====
   // Apply setup wizard enforcement globally to all /api/admin/* routes
   // This blocks admin access when setupComplete !== true, except for /api/admin/setup/* routes
