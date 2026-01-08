@@ -115,6 +115,9 @@ export interface IStorage {
   upsertUser(user: UpsertUser): Promise<User>;
   updateUserPassword(userId: string, hashedPassword: string): Promise<void>;
   updateUserPhoneVerified(userId: string, verified: boolean): Promise<void>;
+  setPasswordResetToken(userId: string, hashedToken: string, expiresAt: Date): Promise<void>;
+  getUserByResetToken(hashedToken: string): Promise<User | undefined>;
+  clearPasswordResetToken(userId: string): Promise<void>;
 
   // Admin Application operations
   createAdminApplication(application: InsertAdminApplication): Promise<AdminApplication>;
@@ -439,6 +442,34 @@ export class DatabaseStorage implements IStorage {
     await db
       .update(users)
       .set({ phoneVerified: verified, updatedAt: new Date() })
+      .where(eq(users.id, userId));
+  }
+
+  async setPasswordResetToken(userId: string, hashedToken: string, expiresAt: Date): Promise<void> {
+    await db
+      .update(users)
+      .set({ 
+        passwordResetToken: hashedToken, 
+        passwordResetExpires: expiresAt, 
+        updatedAt: new Date() 
+      })
+      .where(eq(users.id, userId));
+  }
+
+  async getUserByResetToken(hashedToken: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users)
+      .where(eq(users.passwordResetToken, hashedToken));
+    return user;
+  }
+
+  async clearPasswordResetToken(userId: string): Promise<void> {
+    await db
+      .update(users)
+      .set({ 
+        passwordResetToken: null, 
+        passwordResetExpires: null, 
+        updatedAt: new Date() 
+      })
       .where(eq(users.id, userId));
   }
 

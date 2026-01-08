@@ -706,6 +706,130 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Forgot password - Request password reset email
+  app.post('/api/admin/forgot-password', loginLimiter, async (req, res) => {
+    try {
+      const { email } = req.body;
+
+      if (!email) {
+        return res.status(400).json({ message: "Email is required" });
+      }
+
+      const user = await storage.getUserByEmail(email);
+      
+      // Always return success to prevent email enumeration
+      // But only actually send email if user exists and is admin
+      if (user && (user.role === 'admin' || user.role === 'super_admin')) {
+        const crypto = await import('crypto');
+        const resetToken = crypto.randomBytes(32).toString('hex');
+        const hashedToken = crypto.createHash('sha256').update(resetToken).digest('hex');
+        const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+
+        await storage.setPasswordResetToken(user.id, hashedToken, expiresAt);
+
+        // Get the domain for the reset link
+        const domain = process.env.REPLIT_DEV_DOMAIN || process.env.REPL_SLUG + '.' + process.env.REPL_OWNER + '.repl.co';
+        const resetUrl = `https://${domain}/admin/reset-password?token=${resetToken}`;
+
+        // Try to send email via notification service or log for dev
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`[DEV] Password reset link for ${email}: ${resetUrl}`);
+        }
+
+        // Try to send via nodemailer if SMTP is configured
+        try {
+          const nodemailer = await import('nodemailer');
+          const smtpHost = process.env.SMTP_HOST;
+          const smtpUser = process.env.SMTP_USER;
+          const smtpPass = process.env.SMTP_PASS;
+
+          if (smtpHost && smtpUser && smtpPass) {
+            const transporter = nodemailer.default.createTransport({
+              host: smtpHost,
+              port: parseInt(process.env.SMTP_PORT || '587'),
+              secure: process.env.SMTP_SECURE === 'true',
+              auth: { user: smtpUser, pass: smtpPass },
+            });
+
+            await transporter.sendMail({
+              from: process.env.SMTP_FROM || smtpUser,
+              to: email,
+              subject: 'Password Reset Request',
+              html: `
+                <h2>Password Reset</h2>
+                <p>You requested a password reset. Click the link below to reset your password:</p>
+                <p><a href="${resetUrl}">Reset Password</a></p>
+                <p>This link expires in 1 hour.</p>
+                <p>If you didn't request this, please ignore this email.</p>
+              `,
+            });
+            logger.info("Password reset email sent", { email: redactEmail(email) });
+          }
+        } catch (emailError) {
+          logger.warn("Failed to send password reset email", { error: emailError instanceof Error ? emailError.message : 'Unknown' });
+        }
+
+        await AuditLogger.log(req, 'PASSWORD_RESET_REQUEST', 'user', user.id);
+      }
+
+      // Always return success to prevent email enumeration
+      res.json({ 
+        success: true, 
+        message: "If an account exists with this email, you will receive a password reset link." 
+      });
+    } catch (error) {
+      logger.error("Forgot password error", { error: error instanceof Error ? error.message : 'Unknown error' });
+      res.status(500).json({ message: "Failed to process request" });
+    }
+  });
+
+  // Reset password with token
+  app.post('/api/admin/reset-password', loginLimiter, async (req, res) => {
+    try {
+      const { token, password } = req.body;
+
+      if (!token || !password) {
+        return res.status(400).json({ message: "Token and new password are required" });
+      }
+
+      // Validate password strength
+      const passwordValidation = validatePassword(password);
+      if (!passwordValidation.valid) {
+        return res.status(400).json({ message: passwordValidation.message });
+      }
+
+      // Hash the token to compare with stored value
+      const crypto = await import('crypto');
+      const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
+
+      // Find user with matching token and not expired
+      const user = await storage.getUserByResetToken(hashedToken);
+
+      if (!user) {
+        return res.status(400).json({ message: "Invalid or expired reset token" });
+      }
+
+      if (!user.passwordResetExpires || new Date() > new Date(user.passwordResetExpires)) {
+        return res.status(400).json({ message: "Reset token has expired. Please request a new one." });
+      }
+
+      // Hash and update password
+      const hashedPassword = await bcrypt.hash(password, 10);
+      await storage.updateUserPassword(user.id, hashedPassword);
+      
+      // Clear reset token
+      await storage.clearPasswordResetToken(user.id);
+
+      await AuditLogger.log(req, 'PASSWORD_RESET_COMPLETE', 'user', user.id);
+      logger.info("Password reset completed", { userId: user.id });
+
+      res.json({ success: true, message: "Password reset successfully. You can now login with your new password." });
+    } catch (error) {
+      logger.error("Reset password error", { error: error instanceof Error ? error.message : 'Unknown error' });
+      res.status(500).json({ message: "Failed to reset password" });
+    }
+  });
+
   // ===== SETUP WIZARD ENFORCEMENT =====
   // Apply setup wizard enforcement globally to all /api/admin/* routes
   // This blocks admin access when setupComplete !== true, except for /api/admin/setup/* routes

@@ -30,6 +30,8 @@ import AdminAddOns from "@/pages/admin/AddOns";
 import SuperAdmin from "@/pages/admin/SuperAdmin";
 import SpaSetup from "@/pages/admin/SpaSetup";
 import MyAccount from "@/pages/MyAccount";
+import ForgotPassword from "@/pages/admin/ForgotPassword";
+import ResetPassword from "@/pages/admin/ResetPassword";
 
 function Router() {
   return (
@@ -37,6 +39,8 @@ function Router() {
       <Route path="/" component={Home} />
       <Route path="/login/customer" component={CustomerLogin} />
       <Route path="/login/admin" component={AdminLogin} />
+      <Route path="/admin/forgot-password" component={ForgotPassword} />
+      <Route path="/admin/reset-password" component={ResetPassword} />
       <Route path="/booking" component={BookingSearch} />
       <Route path="/booking/flow" component={BookingFlow} />
       <Route path="/my-account" component={MyAccount} />

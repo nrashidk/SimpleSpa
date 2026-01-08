@@ -429,7 +429,12 @@ export default function AdminLogin() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="login-password">Password</Label>
+                <div className="flex justify-between items-center">
+                  <Label htmlFor="login-password">Password</Label>
+                  <Link href="/admin/forgot-password" className="text-xs text-primary hover:underline">
+                    Forgot password?
+                  </Link>
+                </div>
                 <Input
                   id="login-password"
                   type="password"

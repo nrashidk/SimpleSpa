@@ -138,6 +138,8 @@ const CSRF_EXEMPT_ROUTES = [
   '/api/admin/login', // Login endpoint - pre-authentication, protected by rate limiting
   '/api/admin/register', // Registration endpoint - pre-authentication
   '/api/admin/apply', // Admin application - pre-authentication
+  '/api/admin/forgot-password', // Password reset request - pre-authentication
+  '/api/admin/reset-password', // Password reset with token - pre-authentication
 ];
 
 // Middleware to ensure CSRF token exists in session
