@@ -28,6 +28,8 @@ export const users = pgTable("users", {
   adminSpaId: integer("admin_spa_id"), // Links admin users to their spa
   phoneVerified: boolean("phone_verified").default(false), // Whether phone is verified via OTP
   emailVerified: boolean("email_verified").default(false), // Whether email is verified
+  passwordResetToken: varchar("password_reset_token"), // Secure token for password reset
+  passwordResetExpires: timestamp("password_reset_expires"), // Token expiration time
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
