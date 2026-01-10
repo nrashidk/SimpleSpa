@@ -2,7 +2,9 @@ import express, { type Express } from "express";
 import { createServer, type Server } from "http";
 import crypto from "crypto";
 import { z } from "zod";
+import twilio from "twilio";
 import { storage } from "./storage";
+import { decryptJSON } from "./encryptionService";
 import { setupAuth, isAuthenticated, isAdmin, isSuperAdmin, injectAdminSpa, enforceSetupWizard, ensureSetupComplete } from "./firebaseAuth";
 import { loginLimiter, bookingLimiter, apiLimiter, validateCsrf, ensureCsrfToken } from "./index";
 import { generateAvailableTimeSlots, validateBooking } from "./timeSlotService";
@@ -5867,9 +5869,77 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Note: Stripe webhook is registered in index.ts before express.json() middleware
   // to ensure raw body access for signature verification
 
-  // Twilio delivery status webhook
+  // Helper: Verify Twilio webhook signature
+  async function verifyTwilioWebhook(req: any): Promise<{ valid: boolean; error?: string }> {
+    try {
+      const twilioSignature = req.headers['x-twilio-signature'] as string;
+      if (!twilioSignature) {
+        return { valid: false, error: 'Missing X-Twilio-Signature header' };
+      }
+
+      const accountSid = req.body.AccountSid;
+      if (!accountSid) {
+        return { valid: false, error: 'Missing AccountSid in webhook payload' };
+      }
+
+      // Get all Twilio credentials and find matching one by AccountSid
+      const allTwilioCredentials = await storage.getAllTwilioCredentials();
+      let matchingCredential = null;
+
+      for (const cred of allTwilioCredentials) {
+        try {
+          const decrypted = decryptJSON<{ accountSid: string; authToken: string }>(cred.encryptedCredentials);
+          if (decrypted.accountSid === accountSid) {
+            matchingCredential = { ...cred, decrypted };
+            break;
+          }
+        } catch {
+          continue;
+        }
+      }
+
+      if (!matchingCredential) {
+        return { valid: false, error: 'No matching Twilio credentials found for AccountSid' };
+      }
+
+      // Reconstruct the webhook URL (accounting for reverse proxies)
+      const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+      const host = req.get('host');
+      const fullUrl = `${protocol}://${host}${req.originalUrl}`;
+
+      // Validate the request signature
+      const isValid = twilio.validateRequest(
+        matchingCredential.decrypted.authToken,
+        twilioSignature,
+        fullUrl,
+        req.body
+      );
+
+      if (!isValid) {
+        securityLogger.suspiciousActivity('Twilio webhook signature validation failed', { 
+          accountSid: accountSid.substring(0, 8) + '...',
+          url: fullUrl 
+        });
+        return { valid: false, error: 'Invalid signature' };
+      }
+
+      return { valid: true };
+    } catch (error) {
+      logger.error('Twilio webhook verification error', { error: error instanceof Error ? error.message : 'Unknown' });
+      return { valid: false, error: 'Verification failed' };
+    }
+  }
+
+  // Twilio delivery status webhook (with signature verification)
   app.post("/api/webhooks/twilio", async (req, res) => {
     try {
+      // Verify Twilio signature
+      const verification = await verifyTwilioWebhook(req);
+      if (!verification.valid) {
+        securityLogger.suspiciousActivity('Twilio webhook rejected', { reason: verification.error });
+        return res.status(403).send('Forbidden');
+      }
+
       const { MessageSid, MessageStatus, To, From, ErrorCode, ErrorMessage } = req.body;
       
       // Update message status in database
@@ -5887,9 +5957,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
   
-  // Twilio WhatsApp inbound message webhook (for booking chatbot)
+  // Twilio WhatsApp inbound message webhook (with signature verification)
   app.post("/api/webhooks/whatsapp/inbound", async (req, res) => {
     try {
+      // Verify Twilio signature
+      const verification = await verifyTwilioWebhook(req);
+      if (!verification.valid) {
+        securityLogger.suspiciousActivity('WhatsApp webhook rejected', { reason: verification.error });
+        return res.status(403).send('Forbidden');
+      }
+
       const { MessageSid, From, To, Body, ButtonPayload, ListId, ListTitle } = req.body;
       
       logger.debug('WhatsApp inbound message', { from: From, hasBody: !!Body });
@@ -5917,8 +5994,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // MSG91 delivery status webhook
+  // Note: MSG91 does not support cryptographic signature verification
+  // Security relies on: 1) IP whitelisting in MSG91 dashboard, 2) Optional custom header verification
   app.post("/api/webhooks/msg91", async (req, res) => {
     try {
+      // Optional: Verify custom header if MSG91_WEBHOOK_SECRET is configured
+      const expectedSecret = process.env.MSG91_WEBHOOK_SECRET;
+      if (expectedSecret) {
+        const providedSecret = req.headers['x-msg91-webhook-secret'] as string;
+        if (providedSecret !== expectedSecret) {
+          securityLogger.suspiciousActivity('MSG91 webhook rejected', { reason: 'invalid secret header' });
+          return res.status(403).send('Forbidden');
+        }
+      }
+
       const { requestId, status, mobile, errorCode, errorMessage } = req.body;
       
       // Update message status in database

@@ -2257,6 +2257,39 @@ export class DatabaseStorage implements IStorage {
     return (result.rowCount ?? 0) > 0;
   }
 
+  async getNotificationCredentialsByPhone(phoneNumber: string): Promise<any | undefined> {
+    const normalizedPhone = phoneNumber.replace(/^whatsapp:/, '');
+    const [credential] = await db
+      .select()
+      .from(spaNotificationCredentials)
+      .where(eq(spaNotificationCredentials.fromPhone, normalizedPhone));
+    return credential;
+  }
+
+  async getAllTwilioCredentials(): Promise<any[]> {
+    return await db
+      .select()
+      .from(spaNotificationCredentials)
+      .where(
+        and(
+          eq(spaNotificationCredentials.provider, 'twilio'),
+          eq(spaNotificationCredentials.status, 'active')
+        )
+      );
+  }
+
+  async getAllMsg91Credentials(): Promise<any[]> {
+    return await db
+      .select()
+      .from(spaNotificationCredentials)
+      .where(
+        and(
+          eq(spaNotificationCredentials.provider, 'msg91'),
+          eq(spaNotificationCredentials.status, 'active')
+        )
+      );
+  }
+
   async updateNotificationEventStatus(externalId: string, updates: any): Promise<void> {
     await db
       .update(notificationEvents)
