@@ -480,6 +480,7 @@ export default function AdminSettings() {
       },
       {
         onSuccess: () => {
+          setEditMode({ ...editMode, vatSettings: false });
           toast({
             title: "VAT settings saved",
             description: vatConfig.vatEnabled 
@@ -527,6 +528,7 @@ export default function AdminSettings() {
       },
       {
         onSuccess: () => {
+          setEditMode({ ...editMode, vatThreshold: false });
           toast({
             title: "Reminder settings saved",
             description: vatThresholdReminder.enabled
@@ -1001,6 +1003,7 @@ export default function AdminSettings() {
                 id="vat-enabled"
                 checked={vatConfig.vatEnabled}
                 onCheckedChange={(checked) => setVatConfig({ ...vatConfig, vatEnabled: checked })}
+                disabled={hasVatSettings && !editMode.vatSettings}
                 data-testid="switch-vat-enabled"
               />
             </div>
@@ -1014,6 +1017,7 @@ export default function AdminSettings() {
                   onChange={(e) => setVatConfig({ ...vatConfig, taxRegistrationNumber: e.target.value })}
                   placeholder="Enter 15-digit TRN (e.g., 123456789012345)"
                   maxLength={15}
+                  disabled={hasVatSettings && !editMode.vatSettings}
                   data-testid="input-trn"
                 />
                 <p className="text-sm text-muted-foreground">
@@ -1023,13 +1027,23 @@ export default function AdminSettings() {
             )}
           </div>
 
-          <Button 
-            onClick={handleSaveVatSettings} 
-            data-testid="button-save-vat-settings"
-            disabled={updateVatMutation.isPending}
-          >
-            {updateVatMutation.isPending ? "Saving..." : "Save VAT Settings"}
-          </Button>
+          <div className="flex gap-2">
+            <Button 
+              onClick={handleSaveVatSettings} 
+              data-testid="button-save-vat-settings"
+              disabled={(hasVatSettings && !editMode.vatSettings) || updateVatMutation.isPending}
+            >
+              {updateVatMutation.isPending ? "Saving..." : "Save"}
+            </Button>
+            <Button 
+              variant="outline"
+              onClick={() => setEditMode({ ...editMode, vatSettings: !editMode.vatSettings })}
+              disabled={!hasVatSettings}
+              data-testid="button-update-vat-settings"
+            >
+              {editMode.vatSettings ? "Cancel" : "Update"}
+            </Button>
+          </div>
         </CardContent>
       </Card>
 
@@ -1092,6 +1106,7 @@ export default function AdminSettings() {
                 id="threshold-reminder-enabled"
                 checked={vatThresholdReminder.enabled}
                 onCheckedChange={(checked) => setVatThresholdReminder({ ...vatThresholdReminder, enabled: checked })}
+                disabled={hasVatThreshold && !editMode.vatThreshold}
                 data-testid="switch-threshold-reminder-enabled"
               />
             </div>
@@ -1105,6 +1120,7 @@ export default function AdminSettings() {
                 onChange={(e) => setVatThresholdReminder({ ...vatThresholdReminder, thresholdAmount: e.target.value })}
                 placeholder="375000"
                 step="1000"
+                disabled={hasVatThreshold && !editMode.vatThreshold}
                 data-testid="input-threshold-amount"
               />
               <p className="text-sm text-muted-foreground">
@@ -1113,13 +1129,23 @@ export default function AdminSettings() {
             </div>
           </div>
 
-          <Button 
-            onClick={handleSaveThresholdReminder} 
-            data-testid="button-save-threshold-reminder"
-            disabled={updateThresholdReminderMutation.isPending}
-          >
-            {updateThresholdReminderMutation.isPending ? "Saving..." : "Save Reminder Settings"}
-          </Button>
+          <div className="flex gap-2">
+            <Button 
+              onClick={handleSaveThresholdReminder} 
+              data-testid="button-save-threshold-reminder"
+              disabled={(hasVatThreshold && !editMode.vatThreshold) || updateThresholdReminderMutation.isPending}
+            >
+              {updateThresholdReminderMutation.isPending ? "Saving..." : "Save"}
+            </Button>
+            <Button 
+              variant="outline"
+              onClick={() => setEditMode({ ...editMode, vatThreshold: !editMode.vatThreshold })}
+              disabled={!hasVatThreshold}
+              data-testid="button-update-threshold-reminder"
+            >
+              {editMode.vatThreshold ? "Cancel" : "Update"}
+            </Button>
+          </div>
         </CardContent>
       </Card>
 
