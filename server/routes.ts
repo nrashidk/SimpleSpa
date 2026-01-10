@@ -4,6 +4,9 @@ import crypto from "crypto";
 import { z } from "zod";
 import twilio from "twilio";
 import { storage } from "./storage";
+import { db } from "./db";
+import { users, spas } from "@shared/schema";
+import { eq } from "drizzle-orm";
 import { decryptJSON } from "./encryptionService";
 import { setupAuth, isAuthenticated, isAdmin, isSuperAdmin, injectAdminSpa, enforceSetupWizard, ensureSetupComplete } from "./firebaseAuth";
 import { loginLimiter, bookingLimiter, apiLimiter, validateCsrf, ensureCsrfToken } from "./index";
@@ -483,6 +486,104 @@ export async function registerRoutes(app: Express): Promise<Server> {
         adminSpaId: user.adminSpaId,
         createdAt: user.createdAt,
       });
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : 'Unknown error' });
+    }
+  });
+
+  // DEBUG: Temporary endpoint to create/update admin user (REMOVE AFTER DEBUGGING)
+  // Uses a secret key to prevent unauthorized access
+  app.post('/api/debug/setup-admin', async (req, res) => {
+    try {
+      const { email, password, secretKey } = req.body;
+      
+      // Simple secret key check - must match environment variable to proceed
+      const expectedKey = process.env.ADMIN_SETUP_SECRET || 'disabled';
+      if (expectedKey === 'disabled' || secretKey !== expectedKey) {
+        return res.status(403).json({ error: 'Setup endpoint disabled or invalid key' });
+      }
+      
+      if (!email || !password) {
+        return res.status(400).json({ error: 'Email and password required' });
+      }
+      
+      // Hash password
+      const hashedPassword = await bcrypt.hash(password, 10);
+      
+      // Check if user exists
+      const existingUser = await storage.getUserByEmail(email);
+      
+      if (existingUser) {
+        // Update existing user to admin
+        // First ensure spa exists
+        let spaId = existingUser.adminSpaId;
+        if (!spaId) {
+          // Create or get spa
+          const [spa] = await db.select().from(spas).where(eq(spas.name, 'Retro Lounge'));
+          if (spa) {
+            spaId = spa.id;
+          } else {
+            const [newSpa] = await db.insert(spas).values({
+              name: 'Retro Lounge',
+              slug: 'retro-lounge',
+              description: 'Welcome to Retro Lounge',
+              businessHours: {},
+            }).returning();
+            spaId = newSpa.id;
+          }
+        }
+        
+        await db.update(users)
+          .set({ 
+            password: hashedPassword,
+            role: 'admin',
+            status: 'approved',
+            adminSpaId: spaId
+          })
+          .where(eq(users.email, email.toLowerCase()));
+        
+        return res.json({ 
+          success: true, 
+          message: 'User updated to admin',
+          userId: existingUser.id,
+          spaId: spaId
+        });
+      } else {
+        // Create new admin user
+        const [spa] = await db.select().from(spas).where(eq(spas.name, 'Retro Lounge'));
+        let spaId: number;
+        
+        if (spa) {
+          spaId = spa.id;
+        } else {
+          const [newSpa] = await db.insert(spas).values({
+            name: 'Retro Lounge',
+            slug: 'retro-lounge',
+            description: 'Welcome to Retro Lounge',
+            businessHours: {},
+          }).returning();
+          spaId = newSpa.id;
+        }
+        
+        const userId = crypto.randomUUID();
+        await db.insert(users).values({
+          id: userId,
+          email: email.toLowerCase(),
+          password: hashedPassword,
+          role: 'admin',
+          status: 'approved',
+          adminSpaId: spaId,
+          firstName: 'Admin',
+          lastName: 'User',
+        });
+        
+        return res.json({ 
+          success: true, 
+          message: 'New admin user created',
+          userId: userId,
+          spaId: spaId
+        });
+      }
     } catch (error) {
       res.status(500).json({ error: error instanceof Error ? error.message : 'Unknown error' });
     }
