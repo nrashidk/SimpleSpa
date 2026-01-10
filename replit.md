@@ -40,7 +40,7 @@ The backend utilizes a PostgreSQL database and an Express-based REST API.
     - **OAuth CSRF Protection:** HMAC-SHA256 signed state parameter for OAuth flows using SESSION_SECRET with single-use nonce enforcement to prevent replay attacks.
     - **File Upload Hardening:** Symlink resolution (fs.realpathSync) before path validation, magic bytes validation for PDFs/images, authentication requirement for license uploads.
     - **Rate Limiting:** Login (5 per 15 min), booking (10 per min), API (100 per min), OTP request (3 per 15 min), OTP verify (10 per 15 min) to prevent brute force, DoS, and SMS flooding
-    - **Helmet Security Headers:** CSP, XSS protection, HSTS, and other security headers
+    - **Helmet Security Headers (Updated 2026-01-10):** Production-only CSP with allowlists for Firebase Auth (googleapis.com, firebaseapp.com, gstatic.com), reCAPTCHA (google.com, recaptcha.net for global fallback), Stripe (js.stripe.com, api.stripe.com, hooks.stripe.com, m.stripe.network), and HSTS with 1-year max-age
     - **Multi-Tenant Data Isolation:** All tables (services, staff, products, customers, bookings) filter by spaId with database-level enforcement
     - **IDOR Protection:** All DELETE/UPDATE endpoints verify resource ownership before mutation
     - **Strong Password Policy:** 12+ characters with uppercase, lowercase, numbers, and special characters
