@@ -41,9 +41,29 @@ app.use(cors({
 }));
 
 // Security headers (configured for development and production)
+const isProductionEnv = process.env.NODE_ENV === 'production' || process.env.REPLIT_DEPLOYMENT === '1';
 app.use(helmet({
-  contentSecurityPolicy: process.env.NODE_ENV === 'production' ? undefined : false,
+  contentSecurityPolicy: isProductionEnv ? {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://apis.google.com", "https://*.firebaseapp.com", "https://www.gstatic.com", "https://www.google.com", "https://www.recaptcha.net", "https://js.stripe.com"],
+      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+      imgSrc: ["'self'", "data:", "https:", "blob:"],
+      fontSrc: ["'self'", "https://fonts.gstatic.com"],
+      connectSrc: ["'self'", "https://*.googleapis.com", "https://*.firebaseio.com", "https://identitytoolkit.googleapis.com", "wss:", "https://api.stripe.com", "https://*.stripe.com", "https://hooks.stripe.com", "https://www.google.com", "https://www.recaptcha.net", "https://m.stripe.network"],
+      frameSrc: ["'self'", "https://*.firebaseapp.com", "https://js.stripe.com", "https://*.stripe.com", "https://www.google.com", "https://www.gstatic.com", "https://www.recaptcha.net"],
+      objectSrc: ["'none'"],
+      baseUri: ["'self'"],
+      formAction: ["'self'", "https://*.stripe.com", "https://hooks.stripe.com"],
+      upgradeInsecureRequests: [],
+    },
+  } : false,
   crossOriginEmbedderPolicy: false,
+  hsts: isProductionEnv ? {
+    maxAge: 31536000,
+    includeSubDomains: true,
+    preload: true,
+  } : false,
 }));
 
 // Rate limiters for different endpoint types
