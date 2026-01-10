@@ -34,25 +34,48 @@ async function seedAdmin() {
 
   try {
     const existingUser = await db.select().from(users).where(eq(users.email, ADMIN_EMAIL));
+    const hashedPassword = await bcrypt.hash(ADMIN_PASSWORD, 10);
     
     if (existingUser.length > 0) {
       console.log(`User ${ADMIN_EMAIL} already exists.`);
-      console.log("Updating password...");
+      console.log("Updating password and ensuring admin role...");
       
-      const hashedPassword = await bcrypt.hash(ADMIN_PASSWORD, 10);
+      let spaId = existingUser[0].adminSpaId;
+      
+      if (!spaId) {
+        const existingSpa = await db.select().from(spas).where(eq(spas.name, SPA_NAME));
+        if (existingSpa.length > 0) {
+          spaId = existingSpa[0].id;
+          console.log(`Linking to existing spa: ${SPA_NAME} (ID: ${spaId})`);
+        } else {
+          const [newSpa] = await db.insert(spas).values({
+            name: SPA_NAME,
+            slug: SPA_NAME.toLowerCase().replace(/\s+/g, '-'),
+            description: `Welcome to ${SPA_NAME}`,
+            businessHours: {},
+          }).returning();
+          spaId = newSpa.id;
+          console.log(`Created new spa: ${SPA_NAME} (ID: ${spaId})`);
+        }
+      }
+      
       await db.update(users)
         .set({ 
           password: hashedPassword,
           status: 'approved',
-          role: 'admin'
+          role: 'admin',
+          adminSpaId: spaId
         })
         .where(eq(users.email, ADMIN_EMAIL));
       
-      console.log("Password updated successfully!");
+      console.log("User updated successfully!");
+      console.log(`- Password: updated`);
+      console.log(`- Role: admin`);
+      console.log(`- Status: approved`);
+      console.log(`- Spa ID: ${spaId}`);
     } else {
       console.log(`Creating new admin user: ${ADMIN_EMAIL}`);
       
-      const hashedPassword = await bcrypt.hash(ADMIN_PASSWORD, 10);
       const userId = crypto.randomUUID();
       
       const existingSpa = await db.select().from(spas).where(eq(spas.name, SPA_NAME));
