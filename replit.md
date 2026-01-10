@@ -46,7 +46,11 @@ The backend utilizes a PostgreSQL database and an Express-based REST API.
     - **Strong Password Policy:** 12+ characters with uppercase, lowercase, numbers, and special characters
     - **Password Change (Added 2026-01-08):** Secure password change endpoint at PUT /api/admin/change-password with current password verification, full password policy validation, and audit logging
     - **Password Reset (Added 2026-01-08):** Secure admin password reset flow with POST /api/admin/forgot-password and POST /api/admin/reset-password endpoints. Features SHA-256 token hashing, 1-hour token expiry, email enumeration prevention (constant response), and rate limiting. UI pages at /admin/forgot-password and /admin/reset-password.
-    - **Session Security:** SameSite=lax cookies, session regeneration on auth state changes
+    - **Session Security:** SameSite cookies (lax in dev, none in production for cross-origin), session regeneration on auth state changes
+    - **Webhook Signature Verification (Added 2026-01-10):**
+      - Twilio webhooks: Cryptographic signature verification using AccountSid lookup and twilio.validateRequest(). Supports reverse proxy URL reconstruction.
+      - MSG91 webhooks: Custom header verification (X-MSG91-Webhook-Secret) since MSG91 doesn't support cryptographic signatures. Pair with IP whitelisting in MSG91 dashboard.
+      - Stripe webhooks: Already verified with stripe-signature header
     - **Input Validation:** Zod schemas for all API endpoints including public booking validation
     - **XSS Protection:** React output encoding (automatic) + helmet CSP headers
     - **Environment Validation:** Required secrets (ENCRYPTION_KEY, DATABASE_URL) validated at startup
