@@ -161,7 +161,6 @@ const CSRF_EXEMPT_ROUTES = [
   '/api/admin/forgot-password', // Password reset request - pre-authentication
   '/api/admin/reset-password', // Password reset with token - pre-authentication
   '/api/upload/license', // License upload for admin application - pre-authentication
-  '/api/debug/setup-admin', // Temporary admin setup - protected by secret key
 ];
 
 // Middleware to ensure CSRF token exists in session

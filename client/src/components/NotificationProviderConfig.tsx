@@ -187,6 +187,10 @@ export default function NotificationProviderConfig() {
                   {getChannelIcon(provider.channel)}
                   <div>
                     <p className="font-medium capitalize">{provider.provider} - {provider.channel}</p>
+                    <p className="text-xs text-muted-foreground">
+                      Credentials: ••••••••••••
+                      {provider.lastValidated && ` | Last validated: ${new Date(provider.lastValidated).toLocaleDateString()}`}
+                    </p>
                     {provider.balance && (
                       <p className="text-sm text-muted-foreground">Balance: {provider.balance}</p>
                     )}
@@ -272,7 +276,12 @@ export default function NotificationProviderConfig() {
       <Card>
         <CardHeader>
           <CardTitle>Configure {selectedProvider === "twilio" ? "Twilio" : "MSG91"}</CardTitle>
-          <CardDescription>Enter your API credentials to enable notifications</CardDescription>
+          <CardDescription>
+            {providers.some(p => p.provider === selectedProvider && p.channel === selectedChannel) 
+              ? "Credentials are already saved. Enter new values to update them."
+              : "Enter your API credentials to enable notifications"
+            }
+          </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           {/* Channel Selection */}
