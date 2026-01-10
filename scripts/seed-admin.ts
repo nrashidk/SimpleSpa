@@ -4,7 +4,7 @@ import { users, spas } from "../shared/schema";
 import { eq } from "drizzle-orm";
 
 const ADMIN_EMAIL = process.env.SEED_ADMIN_EMAIL || "retro_lounge@hotmail.com";
-const ADMIN_PASSWORD = process.env.SEED_ADMIN_PASSWORD;
+const ADMIN_PASSWORD = process.env.SEED_ADMIN_PASSWORD || "RetroLounge2026!";
 const SPA_NAME = process.env.SEED_SPA_NAME || "Retro Lounge";
 
 async function seedAdmin() {
