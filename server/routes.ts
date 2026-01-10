@@ -53,17 +53,33 @@ import {
   insertBillSchema,
 } from "@shared/schema";
 
-// OAuth State HMAC signing for CSRF protection
+// OAuth State HMAC signing for CSRF protection with single-use nonce
+// Used nonces are stored in memory with their expiration time to prevent replay attacks
+const usedOAuthNonces = new Map<string, number>();
+
+// Clean up expired nonces every 5 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [nonce, expiry] of usedOAuthNonces.entries()) {
+    if (now > expiry) {
+      usedOAuthNonces.delete(nonce);
+    }
+  }
+}, 5 * 60 * 1000);
+
 function signOAuthState(data: object): string {
   const secret = process.env.SESSION_SECRET || 'fallback-secret';
-  const stateJson = JSON.stringify(data);
+  // Add unique nonce for single-use enforcement
+  const nonce = crypto.randomBytes(16).toString('hex');
+  const stateData = { ...data, nonce };
+  const stateJson = JSON.stringify(stateData);
   const hmac = crypto.createHmac('sha256', secret);
   hmac.update(stateJson);
   const signature = hmac.digest('hex');
-  return Buffer.from(JSON.stringify({ data, signature })).toString('base64');
+  return Buffer.from(JSON.stringify({ data: stateData, signature })).toString('base64');
 }
 
-function verifyOAuthState(state: string): { valid: boolean; data?: any } {
+function verifyOAuthState(state: string): { valid: boolean; data?: any; alreadyUsed?: boolean } {
   try {
     const secret = process.env.SESSION_SECRET || 'fallback-secret';
     const decoded = JSON.parse(Buffer.from(state, 'base64').toString());
@@ -74,10 +90,23 @@ function verifyOAuthState(state: string): { valid: boolean; data?: any } {
     if (decoded.signature !== expectedSignature) {
       return { valid: false };
     }
+    
+    // Check if nonce has already been used (replay attack prevention)
+    const nonce = decoded.data.nonce;
+    if (usedOAuthNonces.has(nonce)) {
+      securityLogger.warn("OAuth state nonce replay attempt detected", { nonce: nonce.substring(0, 8) + '...' });
+      return { valid: false, alreadyUsed: true };
+    }
+    
     return { valid: true, data: decoded.data };
   } catch {
     return { valid: false };
   }
+}
+
+function markOAuthStateAsUsed(nonce: string, expiryMs: number = 10 * 60 * 1000): void {
+  // Store nonce with expiration timestamp (10 minutes by default)
+  usedOAuthNonces.set(nonce, Date.now() + expiryMs);
 }
 
 // Dummy password hash for constant-time comparison (prevents email enumeration)
@@ -961,15 +990,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // SECURITY: Verify HMAC-signed state to prevent OAuth CSRF attacks
       const stateVerification = verifyOAuthState(state as string);
       if (!stateVerification.valid) {
-        return res.redirect('/admin/settings?oauth_error=invalid_state');
+        const errorType = stateVerification.alreadyUsed ? 'state_reused' : 'invalid_state';
+        return res.redirect(`/admin/settings?oauth_error=${errorType}`);
       }
       
-      const { spaId, integrationType, userId, timestamp } = stateVerification.data;
+      const { spaId, integrationType, userId, timestamp, nonce } = stateVerification.data;
 
       // Verify state is recent (within 10 minutes)
       if (Date.now() - timestamp > 10 * 60 * 1000) {
         return res.redirect('/admin/settings?oauth_error=expired_state');
       }
+      
+      // SECURITY: Mark nonce as used immediately to prevent replay attacks
+      markOAuthStateAsUsed(nonce);
 
       // Exchange code for tokens
       const tokens = await exchangeCodeForTokens(provider, integrationType, code as string);
