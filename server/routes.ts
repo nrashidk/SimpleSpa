@@ -463,6 +463,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // DEBUG: Temporary endpoint to check user exists in database (REMOVE AFTER DEBUGGING)
+  app.get('/api/debug/check-user/:email', async (req, res) => {
+    try {
+      const email = req.params.email;
+      const user = await storage.getUserByEmail(email);
+      
+      if (!user) {
+        return res.json({ exists: false, message: "User not found in database" });
+      }
+      
+      return res.json({
+        exists: true,
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        status: user.status,
+        hasPassword: !!user.password,
+        adminSpaId: user.adminSpaId,
+        createdAt: user.createdAt,
+      });
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : 'Unknown error' });
+    }
+  });
+
   // Admin login route (email/password authentication) - Rate limited to prevent brute force
   // SECURITY: Constant-time comparison to prevent email enumeration timing attacks
   app.post('/api/admin/login', loginLimiter, async (req, res) => {
