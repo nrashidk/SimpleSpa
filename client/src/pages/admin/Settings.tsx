@@ -127,6 +127,24 @@ export default function AdminSettings() {
 
   const [businessHours, setBusinessHours] = useState<Record<string, { open: string; close: string; isOpen?: boolean }>>({});
 
+  // Edit mode states for Save/Update pattern
+  const [editMode, setEditMode] = useState({
+    businessInfo: false,
+    financialSettings: false,
+    branding: false,
+    businessHours: false,
+    vatSettings: false,
+    vatThreshold: false,
+  });
+
+  // Check if data has been saved (exists in the database)
+  const hasBusinessInfo = Boolean(settings?.spaName || settings?.contactEmail || settings?.contactPhone || settings?.address);
+  const hasFinancialSettings = Boolean(settings?.currency || settings?.taxRate);
+  const hasBranding = Boolean(settings?.brandColor || settings?.logoUrl);
+  const hasBusinessHours = Boolean(settings?.businessHours && Object.keys(settings.businessHours as object).length > 0);
+  const hasVatSettings = Boolean(vatSettings?.vatEnabled || vatSettings?.taxRegistrationNumber);
+  const hasVatThreshold = Boolean(thresholdSettings?.vatThresholdReminderEnabled || thresholdSettings?.vatThresholdAmount);
+
   const [vatConfig, setVatConfig] = useState({
     vatEnabled: false,
     taxRegistrationNumber: "",
@@ -330,6 +348,7 @@ export default function AdminSettings() {
       },
       {
         onSuccess: () => {
+          setEditMode({ ...editMode, businessInfo: false });
           toast({
             title: "Business information saved",
             description: "Your business details have been updated successfully.",
@@ -354,6 +373,7 @@ export default function AdminSettings() {
       },
       {
         onSuccess: () => {
+          setEditMode({ ...editMode, financialSettings: false });
           toast({
             title: "Financial settings saved",
             description: "Your financial settings have been updated successfully.",
@@ -378,6 +398,7 @@ export default function AdminSettings() {
       },
       {
         onSuccess: () => {
+          setEditMode({ ...editMode, branding: false });
           toast({
             title: "Branding saved",
             description: "Your branding settings have been updated successfully.",
@@ -401,6 +422,7 @@ export default function AdminSettings() {
       },
       {
         onSuccess: () => {
+          setEditMode({ ...editMode, businessHours: false });
           toast({
             title: "Business hours saved",
             description: "Your business hours have been updated successfully.",
@@ -735,6 +757,7 @@ export default function AdminSettings() {
                 id="spa-name"
                 value={businessInfo.name}
                 onChange={(e) => setBusinessInfo({ ...businessInfo, name: e.target.value })}
+                disabled={hasBusinessInfo && !editMode.businessInfo}
                 data-testid="input-spa-name"
               />
             </div>
@@ -745,6 +768,7 @@ export default function AdminSettings() {
                 type="email"
                 value={businessInfo.email}
                 onChange={(e) => setBusinessInfo({ ...businessInfo, email: e.target.value })}
+                disabled={hasBusinessInfo && !editMode.businessInfo}
                 data-testid="input-spa-email"
               />
             </div>
@@ -757,6 +781,7 @@ export default function AdminSettings() {
                 type="tel"
                 value={businessInfo.phone}
                 onChange={(e) => setBusinessInfo({ ...businessInfo, phone: e.target.value })}
+                disabled={hasBusinessInfo && !editMode.businessInfo}
                 data-testid="input-spa-phone"
               />
             </div>
@@ -766,11 +791,28 @@ export default function AdminSettings() {
                 id="spa-address"
                 value={businessInfo.address}
                 onChange={(e) => setBusinessInfo({ ...businessInfo, address: e.target.value })}
+                disabled={hasBusinessInfo && !editMode.businessInfo}
                 data-testid="input-spa-address"
               />
             </div>
           </div>
-          <Button onClick={handleSaveBusinessInfo} data-testid="button-save-business-info">Save Changes</Button>
+          <div className="flex gap-2">
+            <Button 
+              onClick={handleSaveBusinessInfo} 
+              disabled={hasBusinessInfo && !editMode.businessInfo}
+              data-testid="button-save-business-info"
+            >
+              Save
+            </Button>
+            <Button 
+              variant="outline"
+              onClick={() => setEditMode({ ...editMode, businessInfo: !editMode.businessInfo })}
+              disabled={!hasBusinessInfo}
+              data-testid="button-update-business-info"
+            >
+              {editMode.businessInfo ? "Cancel" : "Update"}
+            </Button>
+          </div>
         </CardContent>
       </Card>
 
@@ -789,6 +831,7 @@ export default function AdminSettings() {
                 id="currency"
                 value={financialSettings.currency}
                 onChange={(e) => setFinancialSettings({ ...financialSettings, currency: e.target.value })}
+                disabled={hasFinancialSettings && !editMode.financialSettings}
                 data-testid="input-currency"
               />
             </div>
@@ -800,11 +843,28 @@ export default function AdminSettings() {
                 value={financialSettings.taxRate}
                 onChange={(e) => setFinancialSettings({ ...financialSettings, taxRate: e.target.value })}
                 step="0.01"
+                disabled={hasFinancialSettings && !editMode.financialSettings}
                 data-testid="input-tax-rate"
               />
             </div>
           </div>
-          <Button onClick={handleSaveFinancialSettings} data-testid="button-save-financial-settings">Save Changes</Button>
+          <div className="flex gap-2">
+            <Button 
+              onClick={handleSaveFinancialSettings} 
+              disabled={hasFinancialSettings && !editMode.financialSettings}
+              data-testid="button-save-financial-settings"
+            >
+              Save
+            </Button>
+            <Button 
+              variant="outline"
+              onClick={() => setEditMode({ ...editMode, financialSettings: !editMode.financialSettings })}
+              disabled={!hasFinancialSettings}
+              data-testid="button-update-financial-settings"
+            >
+              {editMode.financialSettings ? "Cancel" : "Update"}
+            </Button>
+          </div>
         </CardContent>
       </Card>
 
@@ -1081,12 +1141,14 @@ export default function AdminSettings() {
                   value={branding.color}
                   onChange={(e) => setBranding({ ...branding, color: e.target.value })}
                   className="w-20 h-10"
+                  disabled={hasBranding && !editMode.branding}
                   data-testid="input-brand-color"
                 />
                 <Input
                   value={branding.color}
                   onChange={(e) => setBranding({ ...branding, color: e.target.value })}
                   className="flex-1"
+                  disabled={hasBranding && !editMode.branding}
                   data-testid="input-brand-color-hex"
                 />
               </div>
@@ -1098,11 +1160,28 @@ export default function AdminSettings() {
                 value={branding.logoUrl}
                 onChange={(e) => setBranding({ ...branding, logoUrl: e.target.value })}
                 placeholder="https://example.com/logo.png"
+                disabled={hasBranding && !editMode.branding}
                 data-testid="input-logo-url"
               />
             </div>
           </div>
-          <Button onClick={handleSaveBranding} data-testid="button-save-branding">Save Changes</Button>
+          <div className="flex gap-2">
+            <Button 
+              onClick={handleSaveBranding} 
+              disabled={hasBranding && !editMode.branding}
+              data-testid="button-save-branding"
+            >
+              Save
+            </Button>
+            <Button 
+              variant="outline"
+              onClick={() => setEditMode({ ...editMode, branding: !editMode.branding })}
+              disabled={!hasBranding}
+              data-testid="button-update-branding"
+            >
+              {editMode.branding ? "Cancel" : "Update"}
+            </Button>
+          </div>
         </CardContent>
       </Card>
 
@@ -1115,6 +1194,7 @@ export default function AdminSettings() {
             const dayKey = day.toLowerCase();
             const hours = businessHours[dayKey] || { open: "09:00", close: "20:00", isOpen: true };
             const isOpen = hours.isOpen !== false; // Default to open if not specified
+            const isDisabled = hasBusinessHours && !editMode.businessHours;
             
             return (
               <div key={day} className="flex items-center gap-4">
@@ -1127,7 +1207,7 @@ export default function AdminSettings() {
                     value={hours.open}
                     onChange={(e) => setBusinessHours({ ...businessHours, [dayKey]: { ...hours, open: e.target.value } })}
                     className="flex-1"
-                    disabled={!isOpen}
+                    disabled={!isOpen || isDisabled}
                     data-testid={`input-${dayKey}-open`}
                   />
                   <span className="flex items-center px-2">to</span>
@@ -1136,7 +1216,7 @@ export default function AdminSettings() {
                     value={hours.close}
                     onChange={(e) => setBusinessHours({ ...businessHours, [dayKey]: { ...hours, close: e.target.value } })}
                     className="flex-1"
-                    disabled={!isOpen}
+                    disabled={!isOpen || isDisabled}
                     data-testid={`input-${dayKey}-close`}
                   />
                 </div>
@@ -1144,6 +1224,7 @@ export default function AdminSettings() {
                   <Switch
                     checked={isOpen}
                     onCheckedChange={(checked) => setBusinessHours({ ...businessHours, [dayKey]: { ...hours, isOpen: checked } })}
+                    disabled={isDisabled}
                     data-testid={`switch-${dayKey}-open`}
                   />
                   <Label className="text-sm text-muted-foreground">
@@ -1154,7 +1235,23 @@ export default function AdminSettings() {
             );
           })}
           <Separator />
-          <Button onClick={handleSaveBusinessHours} data-testid="button-save-business-hours">Save Business Hours</Button>
+          <div className="flex gap-2">
+            <Button 
+              onClick={handleSaveBusinessHours} 
+              disabled={hasBusinessHours && !editMode.businessHours}
+              data-testid="button-save-business-hours"
+            >
+              Save
+            </Button>
+            <Button 
+              variant="outline"
+              onClick={() => setEditMode({ ...editMode, businessHours: !editMode.businessHours })}
+              disabled={!hasBusinessHours}
+              data-testid="button-update-business-hours"
+            >
+              {editMode.businessHours ? "Cancel" : "Update"}
+            </Button>
+          </div>
         </CardContent>
       </Card>
 
