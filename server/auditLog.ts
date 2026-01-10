@@ -4,7 +4,7 @@ import { auditLogs, InsertAuditLog } from "@shared/schema";
 import { logger } from "./logger";
 
 export type AuditAction = "CREATE" | "UPDATE" | "DELETE" | "LOGIN" | "LOGOUT" | "APPROVAL" | "REJECTION" | "BLOCK" | "UNBLOCK" | "MERGE" | "IMPORT" | "AUTH_FAILED" | "UNAUTHORIZED" | "EXPORT" | "CONFIG_CHANGE" | "PRIVILEGE_USE";
-export type AuditEntityType = "booking" | "invoice" | "service" | "membership" | "customer_membership" | "staff" | "staff_emergency_contact" | "staff_timesheet" | "customer" | "spa" | "product" | "loyalty_card" | "expense" | "vendor" | "service_variant" | "variant_staff_pricing" | "service_addon" | "addon_option" | "service_bundle" | "bundle_item" | "service_extra_time" | "notification_provider" | "security" | "report" | "settings";
+export type AuditEntityType = "booking" | "invoice" | "service" | "membership" | "customer_membership" | "staff" | "staff_emergency_contact" | "staff_timesheet" | "customer" | "spa" | "product" | "loyalty_card" | "expense" | "vendor" | "service_variant" | "variant_staff_pricing" | "service_addon" | "addon_option" | "service_bundle" | "bundle_item" | "service_extra_time" | "notification_provider" | "security" | "report" | "settings" | "promo_code" | "user";
 
 interface AuditLogData {
   userId?: string;

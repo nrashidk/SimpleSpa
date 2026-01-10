@@ -275,14 +275,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // File upload endpoint for license documents
-  app.post('/api/upload/license', upload.single('file'), (req, res) => {
+  // SECURITY: Requires authentication to prevent unauthorized uploads
+  app.post('/api/upload/license', isAuthenticated, upload.single('file'), async (req, res) => {
     try {
       if (!req.file) {
         return res.status(400).json({ message: 'No file uploaded' });
       }
       
+      // SECURITY: Validate file content matches extension (magic bytes check)
+      const fileBuffer = fs.readFileSync(req.file.path);
+      const magicBytes = fileBuffer.slice(0, 8).toString('hex');
+      
+      const validMagicBytes: Record<string, string[]> = {
+        '.pdf': ['25504446'],  // %PDF
+        '.jpg': ['ffd8ffe0', 'ffd8ffe1', 'ffd8ffe2', 'ffd8ffe8'],  // JPEG signatures
+        '.jpeg': ['ffd8ffe0', 'ffd8ffe1', 'ffd8ffe2', 'ffd8ffe8'],
+        '.png': ['89504e47'],  // PNG signature
+      };
+      
+      const ext = path.extname(req.file.originalname).toLowerCase();
+      const expectedMagic = validMagicBytes[ext];
+      
+      if (expectedMagic && !expectedMagic.some(magic => magicBytes.startsWith(magic))) {
+        // Delete the suspicious file
+        fs.unlinkSync(req.file.path);
+        logger.warn("File upload rejected - magic bytes mismatch", { 
+          filename: req.file.originalname,
+          declaredExt: ext,
+          actualMagic: magicBytes.slice(0, 8)
+        });
+        return res.status(400).json({ message: 'Invalid file content. File type does not match extension.' });
+      }
+      
       // Return the file URL (relative path that can be accessed)
       const fileUrl = `/uploads/licenses/${req.file.filename}`;
+      logger.info("License document uploaded", { filename: req.file.filename });
       res.json({ fileUrl });
     } catch (error) {
       console.error('License upload error:', error);
@@ -728,23 +755,47 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         await storage.setPasswordResetToken(user.id, hashedToken, expiresAt);
 
-        // Get the domain for the reset link
-        const domain = process.env.REPLIT_DEV_DOMAIN || process.env.REPL_SLUG + '.' + process.env.REPL_OWNER + '.repl.co';
+        // Get the domain for the reset link - use production domain if deployed, otherwise dev domain
+        const isProduction = process.env.REPLIT_DEPLOYMENT === '1' || process.env.NODE_ENV === 'production';
+        let domain: string;
+        
+        if (isProduction && process.env.REPLIT_DOMAINS) {
+          // In production, use the first domain from REPLIT_DOMAINS (comma-separated list)
+          domain = process.env.REPLIT_DOMAINS.split(',')[0].trim();
+        } else if (process.env.REPLIT_DEV_DOMAIN) {
+          domain = process.env.REPLIT_DEV_DOMAIN;
+        } else {
+          domain = `${process.env.REPL_SLUG}.${process.env.REPL_OWNER}.repl.co`;
+        }
+        
         const resetUrl = `https://${domain}/admin/reset-password?token=${resetToken}`;
+        
+        logger.info("Password reset initiated", { 
+          email: redactEmail(email), 
+          domain,
+          isProduction,
+          hasSmtpConfig: !!(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS)
+        });
 
         // Try to send email via notification service or log for dev
-        if (process.env.NODE_ENV === 'development') {
+        if (process.env.NODE_ENV === 'development' && !process.env.SMTP_HOST) {
           console.log(`[DEV] Password reset link for ${email}: ${resetUrl}`);
         }
 
         // Try to send via nodemailer if SMTP is configured
-        try {
-          const nodemailer = await import('nodemailer');
-          const smtpHost = process.env.SMTP_HOST;
-          const smtpUser = process.env.SMTP_USER;
-          const smtpPass = process.env.SMTP_PASS;
+        const smtpHost = process.env.SMTP_HOST;
+        const smtpUser = process.env.SMTP_USER;
+        const smtpPass = process.env.SMTP_PASS;
 
-          if (smtpHost && smtpUser && smtpPass) {
+        if (!smtpHost || !smtpUser || !smtpPass) {
+          logger.warn("SMTP not configured - password reset email cannot be sent", {
+            hasHost: !!smtpHost,
+            hasUser: !!smtpUser,
+            hasPass: !!smtpPass
+          });
+        } else {
+          try {
+            const nodemailer = await import('nodemailer');
             const transporter = nodemailer.default.createTransport({
               host: smtpHost,
               port: parseInt(process.env.SMTP_PORT || '587'),
@@ -764,13 +815,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 <p>If you didn't request this, please ignore this email.</p>
               `,
             });
-            logger.info("Password reset email sent", { email: redactEmail(email) });
+            logger.info("Password reset email sent successfully", { email: redactEmail(email), to: email });
+          } catch (emailError) {
+            logger.error("Failed to send password reset email", { 
+              error: emailError instanceof Error ? emailError.message : 'Unknown',
+              smtpHost,
+              smtpUser: smtpUser ? `${smtpUser.substring(0, 3)}...` : 'not set'
+            });
           }
-        } catch (emailError) {
-          logger.warn("Failed to send password reset email", { error: emailError instanceof Error ? emailError.message : 'Unknown' });
         }
 
-        await AuditLogger.log(req, 'PASSWORD_RESET_REQUEST', 'user', user.id);
+        await AuditLogger.logAction(req, 'CONFIG_CHANGE', 'user', user.id, { action: 'PASSWORD_RESET_REQUEST' });
       }
 
       // Always return success to prevent email enumeration
@@ -821,7 +876,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Clear reset token
       await storage.clearPasswordResetToken(user.id);
 
-      await AuditLogger.log(req, 'PASSWORD_RESET_COMPLETE', 'user', user.id);
+      await AuditLogger.logAction(req, 'CONFIG_CHANGE', 'user', user.id, { action: 'PASSWORD_RESET_COMPLETE' });
       logger.info("Password reset completed", { userId: user.id });
 
       res.json({ success: true, message: "Password reset successfully. You can now login with your new password." });
@@ -3071,32 +3126,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/admin/products", isAdmin, async (req, res) => {
+  app.post("/api/admin/products", isAdmin, injectAdminSpa, async (req: any, res) => {
     try {
-      const validatedData = insertProductSchema.parse(req.body);
+      const validatedData = insertProductSchema.parse({
+        ...req.body,
+        spaId: req.adminSpa.id  // Enforce tenant isolation
+      });
       const product = await storage.createProduct(validatedData);
       res.json(product);
     } catch (error) {
-      console.error("Error creating product:", error);
-      res.status(500).json({ message: "Failed to create product" });
+      handleRouteError(res, error, "Failed to create product");
     }
   });
 
-  app.put("/api/admin/products/:id", isAdmin, async (req, res) => {
+  app.put("/api/admin/products/:id", isAdmin, injectAdminSpa, async (req: any, res) => {
     try {
       const id = parseNumericId(req.params.id);
       if (id === null) {
         return res.status(400).json({ message: "Invalid product ID" });
       }
-      const validatedData = insertProductSchema.partial().parse(req.body);
-      const product = await storage.updateProduct(id, validatedData);
-      if (!product) {
+      
+      // IDOR Protection: Verify ownership before update
+      const existingProduct = await storage.getProductById(id);
+      if (!existingProduct) {
         return res.status(404).json({ message: "Product not found" });
       }
+      if (existingProduct.spaId !== req.adminSpa.id) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      
+      const validatedData = insertProductSchema.partial().parse(req.body);
+      const product = await storage.updateProduct(id, validatedData);
       res.json(product);
     } catch (error) {
-      console.error("Error updating product:", error);
-      res.status(500).json({ message: "Failed to update product" });
+      handleRouteError(res, error, "Failed to update product");
     }
   });
 
@@ -3128,37 +3191,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Promo Code routes
-  app.get("/api/admin/promo-codes", isAdmin, async (req: any, res) => {
+  // Promo Code routes - with tenant isolation
+  app.get("/api/admin/promo-codes", isAdmin, injectAdminSpa, async (req: any, res) => {
     try {
-      const user = await storage.getUser(req.user.claims.sub);
-      const spaId = user?.adminSpaId ?? undefined;
-      const promoCodes = await storage.getAllPromoCodes(spaId);
+      const promoCodes = await storage.getAllPromoCodes(req.adminSpa.id);
       res.json(promoCodes);
     } catch (error) {
       handleRouteError(res, error, "Failed to fetch promo codes");
     }
   });
 
-  app.post("/api/admin/promo-codes", isAdmin, async (req: any, res) => {
+  app.post("/api/admin/promo-codes", isAdmin, injectAdminSpa, async (req: any, res) => {
     try {
-      const user = await storage.getUser(req.user.claims.sub);
+      const userId = req.user.claims.sub;
       const validatedData = insertPromoCodeSchema.parse({
         ...req.body,
-        spaId: user?.adminSpaId,
-        createdBy: user?.id,
+        spaId: req.adminSpa.id,
+        createdBy: userId,
       });
       const promoCode = await storage.createPromoCode(validatedData);
       
-      await AuditLogger.log({
-        userId: user?.id!,
-        action: "CREATE",
-        entityType: "service",
-        entityId: promoCode.id,
-        ipAddress: req.ip,
-        userAgent: req.get("user-agent"),
-        spaId: user?.adminSpaId ?? undefined,
-      });
+      await AuditLogger.logCreate(req, "promo_code", promoCode.id, validatedData, req.adminSpa.id);
       
       res.json(promoCode);
     } catch (error) {
@@ -3166,30 +3219,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put("/api/admin/promo-codes/:id", isAdmin, async (req: any, res) => {
+  app.put("/api/admin/promo-codes/:id", isAdmin, injectAdminSpa, async (req: any, res) => {
     try {
       const id = parseNumericId(req.params.id);
       if (id === null) {
         return res.status(400).json({ message: "Invalid promo code ID" });
       }
       
-      const user = await storage.getUser(req.user.claims.sub);
+      // IDOR Protection: Verify ownership before update
+      const existing = await storage.getPromoCodeById(id);
+      if (!existing) {
+        return res.status(404).json({ message: "Promo code not found" });
+      }
+      if (existing.spaId !== req.adminSpa.id) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      
       const validatedData = insertPromoCodeSchema.partial().parse(req.body);
       const promoCode = await storage.updatePromoCode(id, validatedData);
       
-      if (!promoCode) {
-        return res.status(404).json({ message: "Promo code not found" });
-      }
-      
-      await AuditLogger.log({
-        userId: user?.id!,
-        action: "UPDATE",
-        entityType: "service",
-        entityId: id,
-        ipAddress: req.ip,
-        userAgent: req.get("user-agent"),
-        spaId: user?.adminSpaId ?? undefined,
-      });
+      await AuditLogger.logUpdate(req, "promo_code", id, existing, validatedData, req.adminSpa.id);
       
       res.json(promoCode);
     } catch (error) {
@@ -3197,29 +3246,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete("/api/admin/promo-codes/:id", isAdmin, async (req: any, res) => {
+  app.delete("/api/admin/promo-codes/:id", isAdmin, injectAdminSpa, async (req: any, res) => {
     try {
       const id = parseNumericId(req.params.id);
       if (id === null) {
         return res.status(400).json({ message: "Invalid promo code ID" });
       }
       
-      const user = await storage.getUser(req.user.claims.sub);
-      const deleted = await storage.deletePromoCode(id);
-      
-      if (!deleted) {
+      // IDOR Protection: Verify ownership before delete
+      const existing = await storage.getPromoCodeById(id);
+      if (!existing) {
         return res.status(404).json({ message: "Promo code not found" });
       }
+      if (existing.spaId !== req.adminSpa.id) {
+        return res.status(403).json({ message: "Access denied" });
+      }
       
-      await AuditLogger.log({
-        userId: user?.id!,
-        action: "DELETE",
-        entityType: "service",
-        entityId: id,
-        ipAddress: req.ip,
-        userAgent: req.get("user-agent"),
-        spaId: user?.adminSpaId ?? undefined,
-      });
+      const deleted = await storage.deletePromoCode(id);
+      
+      await AuditLogger.logDelete(req, "promo_code", id, existing, req.adminSpa.id);
       
       res.json({ success: true });
     } catch (error) {
@@ -3433,31 +3478,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/admin/customers", isAdmin, async (req, res) => {
+  app.post("/api/admin/customers", isAdmin, injectAdminSpa, async (req: any, res) => {
     try {
-      const validatedData = insertCustomerSchema.parse(req.body);
+      const validatedData = insertCustomerSchema.parse({
+        ...req.body,
+        spaId: req.adminSpa.id  // Enforce tenant isolation
+      });
       const customer = await storage.createCustomer(validatedData);
+      await AuditLogger.logCreate(req, "customer", customer.id, validatedData, req.adminSpa.id);
       res.json(customer);
     } catch (error: any) {
-      if (error.name === "ZodError") {
-        return res.status(400).json({ message: "Invalid customer data", errors: error.errors });
-      }
-      console.error("Error creating customer:", error);
-      res.status(500).json({ message: "Failed to create customer" });
+      handleRouteError(res, error, "Failed to create customer");
     }
   });
 
-  app.put("/api/admin/customers/:id", isAdmin, async (req, res) => {
+  app.put("/api/admin/customers/:id", isAdmin, injectAdminSpa, async (req: any, res) => {
     try {
       const id = parseNumericId(req.params.id);
       if (id === null) {
         return res.status(400).json({ message: "Invalid customer ID" });
       }
-      const validatedData = insertCustomerSchema.partial().parse(req.body);
-      const customer = await storage.updateCustomer(id, validatedData);
-      if (!customer) {
+      
+      // IDOR Protection: Verify ownership before update
+      const existing = await storage.getCustomerById(id);
+      if (!existing) {
         return res.status(404).json({ message: "Customer not found" });
       }
+      if (existing.spaId !== req.adminSpa.id) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      
+      const validatedData = insertCustomerSchema.partial().parse(req.body);
+      const customer = await storage.updateCustomer(id, validatedData);
       res.json(customer);
     } catch (error: any) {
       handleRouteError(res, error, "Failed to update customer");
