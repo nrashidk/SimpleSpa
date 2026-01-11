@@ -1,3 +1,14 @@
+/**
+ * Admin Services Routes - ILLUSTRATIVE PATTERN ONLY
+ * 
+ * This file demonstrates how to extract routes from the monolithic routes.ts.
+ * NOT YET MOUNTED in production - serves as a reference implementation.
+ * 
+ * TODO before mounting:
+ * - Add PUT /services/:id and DELETE /services/:id handlers
+ * - Move shared utilities to server/routes/utils.ts
+ * - Add integration tests
+ */
 import { Router } from "express";
 import { storage } from "../../storage";
 import { logger } from "../../logger";
