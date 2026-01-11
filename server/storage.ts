@@ -150,6 +150,7 @@ export interface IStorage {
 
   // Service Category operations
   getAllServiceCategories(): Promise<ServiceCategory[]>;
+  getServiceCategoriesBySpaId(spaId: number): Promise<ServiceCategory[]>;
   createServiceCategory(category: InsertServiceCategory): Promise<ServiceCategory>;
   updateServiceCategory(id: number, category: Partial<InsertServiceCategory>): Promise<ServiceCategory | undefined>;
   deleteServiceCategory(id: number): Promise<boolean>;
@@ -165,6 +166,7 @@ export interface IStorage {
 
   // Membership operations
   getAllMemberships(): Promise<Membership[]>;
+  getMembershipsBySpaId(spaId: number): Promise<Membership[]>;
   getMembershipById(id: number): Promise<Membership | undefined>;
   createMembership(membership: InsertMembership): Promise<Membership>;
   updateMembership(id: number, membership: Partial<InsertMembership>): Promise<Membership | undefined>;
@@ -178,6 +180,7 @@ export interface IStorage {
   
   // Customer Membership operations
   getAllCustomerMemberships(): Promise<CustomerMembership[]>;
+  getCustomerMembershipsBySpaId(spaId: number): Promise<CustomerMembership[]>;
   getCustomerMembershipById(id: number): Promise<CustomerMembership | undefined>;
   getCustomerMembershipsByCustomerId(customerId: number): Promise<CustomerMembership[]>;
   createCustomerMembership(customerMembership: InsertCustomerMembership): Promise<CustomerMembership>;
@@ -247,6 +250,7 @@ export interface IStorage {
 
   // Vendor operations
   getAllVendors(): Promise<Vendor[]>;
+  getVendorsBySpaId(spaId: number): Promise<Vendor[]>;
   getVendorById(id: number): Promise<Vendor | undefined>;
   getVendorByEmail(email: string): Promise<Vendor | undefined>;
   createVendor(vendor: InsertVendor): Promise<Vendor>;
@@ -255,6 +259,7 @@ export interface IStorage {
 
   // Expense operations
   getAllExpenses(): Promise<Expense[]>;
+  getExpensesBySpaId(spaId: number): Promise<Expense[]>;
   getExpenseById(id: number): Promise<Expense | undefined>;
   createExpense(expense: InsertExpense): Promise<Expense>;
   updateExpense(id: number, expense: Partial<InsertExpense>): Promise<Expense | undefined>;
@@ -262,6 +267,7 @@ export interface IStorage {
 
   // Bill operations
   getAllBills(): Promise<Bill[]>;
+  getBillsBySpaId(spaId: number): Promise<Bill[]>;
   getBillById(id: number): Promise<Bill | undefined>;
   createBill(bill: InsertBill): Promise<Bill>;
   updateBill(id: number, bill: Partial<InsertBill>): Promise<Bill | undefined>;
@@ -285,11 +291,13 @@ export interface IStorage {
 
   // Transaction operations
   getAllTransactions(): Promise<Transaction[]>;
+  getTransactionsBySpaId(spaId: number): Promise<Transaction[]>;
   getTransactionById(id: number): Promise<Transaction | undefined>;
   createTransaction(transaction: InsertTransaction): Promise<Transaction>;
 
   // Loyalty Card operations
   getAllLoyaltyCards(): Promise<LoyaltyCard[]>;
+  getLoyaltyCardsBySpaId(spaId: number): Promise<LoyaltyCard[]>;
   getLoyaltyCardById(id: number): Promise<LoyaltyCard | undefined>;
   getLoyaltyCardsByCustomerId(customerId: number): Promise<LoyaltyCard[]>;
   createLoyaltyCard(card: InsertLoyaltyCard): Promise<LoyaltyCard>;
@@ -303,6 +311,7 @@ export interface IStorage {
 
   // Product Sales operations
   getAllProductSales(): Promise<ProductSale[]>;
+  getProductSalesBySpaId(spaId: number): Promise<ProductSale[]>;
   getProductSaleById(id: number): Promise<ProductSale | undefined>;
   getProductSalesByCustomerId(customerId: number): Promise<ProductSale[]>;
   createProductSale(sale: InsertProductSale): Promise<ProductSale>;
@@ -688,6 +697,10 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(serviceCategories).orderBy(serviceCategories.displayOrder);
   }
 
+  async getServiceCategoriesBySpaId(spaId: number): Promise<ServiceCategory[]> {
+    return db.select().from(serviceCategories).where(eq(serviceCategories.spaId, spaId)).orderBy(serviceCategories.displayOrder);
+  }
+
   async createServiceCategory(category: InsertServiceCategory): Promise<ServiceCategory> {
     // Validate required fields
     if (!category.name || typeof category.name !== "string") {
@@ -790,6 +803,10 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(memberships).orderBy(memberships.name);
   }
 
+  async getMembershipsBySpaId(spaId: number): Promise<Membership[]> {
+    return db.select().from(memberships).where(eq(memberships.spaId, spaId)).orderBy(memberships.name);
+  }
+
   async getMembershipById(id: number): Promise<Membership | undefined> {
     const [membership] = await db.select().from(memberships).where(eq(memberships.id, id));
     return membership;
@@ -852,6 +869,15 @@ export class DatabaseStorage implements IStorage {
   // Customer Membership operations
   async getAllCustomerMemberships(): Promise<CustomerMembership[]> {
     return db.select().from(customerMemberships).orderBy(desc(customerMemberships.purchaseDate));
+  }
+
+  async getCustomerMembershipsBySpaId(spaId: number): Promise<CustomerMembership[]> {
+    const rows = await db.select({ membership: customerMemberships })
+      .from(customerMemberships)
+      .innerJoin(customers, eq(customerMemberships.customerId, customers.id))
+      .where(eq(customers.spaId, spaId))
+      .orderBy(desc(customerMemberships.purchaseDate));
+    return rows.map(r => r.membership);
   }
 
   async getCustomerMembershipById(id: number): Promise<CustomerMembership | undefined> {
@@ -1588,6 +1614,10 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(vendors).orderBy(vendors.name);
   }
 
+  async getVendorsBySpaId(spaId: number): Promise<Vendor[]> {
+    return db.select().from(vendors).where(eq(vendors.spaId, spaId)).orderBy(vendors.name);
+  }
+
   async getVendorById(id: number): Promise<Vendor | undefined> {
     const [vendor] = await db.select().from(vendors).where(eq(vendors.id, id));
     return vendor;
@@ -1658,6 +1688,10 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(expenses).orderBy(desc(expenses.expenseDate));
   }
 
+  async getExpensesBySpaId(spaId: number): Promise<Expense[]> {
+    return db.select().from(expenses).where(eq(expenses.spaId, spaId)).orderBy(desc(expenses.expenseDate));
+  }
+
   async getExpenseById(id: number): Promise<Expense | undefined> {
     const [expense] = await db.select().from(expenses).where(eq(expenses.id, id));
     return expense;
@@ -1685,6 +1719,10 @@ export class DatabaseStorage implements IStorage {
   // Bill operations
   async getAllBills(): Promise<Bill[]> {
     return db.select().from(bills).orderBy(desc(bills.billDate));
+  }
+
+  async getBillsBySpaId(spaId: number): Promise<Bill[]> {
+    return db.select().from(bills).where(eq(bills.spaId, spaId)).orderBy(desc(bills.billDate));
   }
 
   async getBillById(id: number): Promise<Bill | undefined> {
@@ -1777,6 +1815,10 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(transactions).orderBy(desc(transactions.transactionDate));
   }
 
+  async getTransactionsBySpaId(spaId: number): Promise<Transaction[]> {
+    return db.select().from(transactions).where(eq(transactions.spaId, spaId)).orderBy(desc(transactions.transactionDate));
+  }
+
   async getTransactionById(id: number): Promise<Transaction | undefined> {
     const [transaction] = await db.select().from(transactions).where(eq(transactions.id, id));
     return transaction;
@@ -1790,6 +1832,15 @@ export class DatabaseStorage implements IStorage {
   // Loyalty Card operations
   async getAllLoyaltyCards(): Promise<LoyaltyCard[]> {
     return db.select().from(loyaltyCards).orderBy(desc(loyaltyCards.purchaseDate));
+  }
+
+  async getLoyaltyCardsBySpaId(spaId: number): Promise<LoyaltyCard[]> {
+    const rows = await db.select({ card: loyaltyCards })
+      .from(loyaltyCards)
+      .innerJoin(customers, eq(loyaltyCards.customerId, customers.id))
+      .where(eq(customers.spaId, spaId))
+      .orderBy(desc(loyaltyCards.purchaseDate));
+    return rows.map(r => r.card);
   }
 
   async getLoyaltyCardById(id: number): Promise<LoyaltyCard | undefined> {
@@ -1853,6 +1904,15 @@ export class DatabaseStorage implements IStorage {
   // Product Sales operations
   async getAllProductSales(): Promise<ProductSale[]> {
     return db.select().from(productSales).orderBy(desc(productSales.saleDate));
+  }
+
+  async getProductSalesBySpaId(spaId: number): Promise<ProductSale[]> {
+    const rows = await db.select({ sale: productSales })
+      .from(productSales)
+      .innerJoin(customers, eq(productSales.customerId, customers.id))
+      .where(eq(customers.spaId, spaId))
+      .orderBy(desc(productSales.saleDate));
+    return rows.map(r => r.sale);
   }
 
   async getProductSaleById(id: number): Promise<ProductSale | undefined> {

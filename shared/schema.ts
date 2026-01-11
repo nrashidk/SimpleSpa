@@ -466,9 +466,10 @@ export const invoiceItems = pgTable("invoice_items", {
   taxCode: text("tax_code").default("SR"), // UAE Tax Codes: SR, ZR, ES, OP
 });
 
-// Transactions/Payments
+// Transactions/Payments - Multi-tenant: each transaction belongs to a spa
 export const transactions = pgTable("transactions", {
   id: serial("id").primaryKey(),
+  spaId: integer("spa_id").references(() => spas.id),
   invoiceId: integer("invoice_id").references(() => invoices.id),
   transactionType: text("transaction_type").notNull(), // payment, refund, expense
   amount: decimal("amount", { precision: 10, scale: 2 }).notNull(),
@@ -476,7 +477,9 @@ export const transactions = pgTable("transactions", {
   transactionDate: timestamp("transaction_date").defaultNow().notNull(),
   reference: text("reference"),
   notes: text("notes"),
-});
+}, (table) => [
+  index("idx_transactions_spa").on(table.spaId),
+]);
 
 // Staff time tracking
 export const staffTimeEntries = pgTable("staff_time_entries", {
@@ -500,9 +503,10 @@ export const staffTimeEntries = pgTable("staff_time_entries", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
-// Vendors (for accounts payable)
+// Vendors (for accounts payable) - Multi-tenant: each vendor belongs to a spa
 export const vendors = pgTable("vendors", {
   id: serial("id").primaryKey(),
+  spaId: integer("spa_id").references(() => spas.id),
   name: text("name").notNull(),
   email: text("email"),
   phone: text("phone"),
@@ -513,11 +517,14 @@ export const vendors = pgTable("vendors", {
   notes: text("notes"),
   active: boolean("active").default(true),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+}, (table) => [
+  index("idx_vendors_spa").on(table.spaId),
+]);
 
-// Bills (Purchase invoices - accounts payable)
+// Bills (Purchase invoices - accounts payable) - Multi-tenant: each bill belongs to a spa
 export const bills = pgTable("bills", {
   id: serial("id").primaryKey(),
+  spaId: integer("spa_id").references(() => spas.id),
   billNumber: text("bill_number").notNull().unique(),
   vendorId: integer("vendor_id").references(() => vendors.id).notNull(),
   billDate: timestamp("bill_date").notNull(),
@@ -531,7 +538,9 @@ export const bills = pgTable("bills", {
   notes: text("notes"),
   attachmentUrl: text("attachment_url"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+}, (table) => [
+  index("idx_bills_spa").on(table.spaId),
+]);
 
 // Bill line items
 export const billItems = pgTable("bill_items", {
@@ -544,9 +553,10 @@ export const billItems = pgTable("bill_items", {
   category: text("category"), // for expense categorization
 });
 
-// Expenses (updated to link with bills)
+// Expenses (updated to link with bills) - Multi-tenant: each expense belongs to a spa
 export const expenses = pgTable("expenses", {
   id: serial("id").primaryKey(),
+  spaId: integer("spa_id").references(() => spas.id),
   category: text("category").notNull(), // supplies, utilities, salary, marketing, etc.
   amount: decimal("amount", { precision: 10, scale: 2 }).notNull(),
   description: text("description").notNull(),
@@ -556,7 +566,9 @@ export const expenses = pgTable("expenses", {
   billId: integer("bill_id").references(() => bills.id),
   receiptUrl: text("receipt_url"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+}, (table) => [
+  index("idx_expenses_spa").on(table.spaId),
+]);
 
 // Inventory transactions
 export const inventoryTransactions = pgTable("inventory_transactions", {

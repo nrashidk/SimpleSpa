@@ -2427,10 +2427,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Service Category routes
-  app.get("/api/admin/service-categories", isAdmin, async (req, res) => {
+  // Service Category routes - Filter by admin's spaId for multi-tenant isolation
+  app.get("/api/admin/service-categories", isAdmin, injectAdminSpa, async (req: any, res) => {
     try {
-      const categories = await storage.getAllServiceCategories();
+      const categories = await storage.getServiceCategoriesBySpaId(req.adminSpa.id);
       res.json(categories);
     } catch (error) {
       console.error("Error fetching service categories:", error);
@@ -2580,10 +2580,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Membership routes
-  app.get("/api/admin/memberships", isAdmin, async (req, res) => {
+  // Membership routes - Filter by admin's spaId for multi-tenant isolation
+  app.get("/api/admin/memberships", isAdmin, injectAdminSpa, async (req: any, res) => {
     try {
-      const memberships = await storage.getAllMemberships();
+      const memberships = await storage.getMembershipsBySpaId(req.adminSpa.id);
       res.json(memberships);
     } catch (error) {
       handleRouteError(res, error, "Failed to fetch memberships");
@@ -2713,9 +2713,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Customer Membership routes
-  app.get("/api/admin/customer-memberships", isAdmin, async (req, res) => {
+  app.get("/api/admin/customer-memberships", isAdmin, injectAdminSpa, async (req: any, res) => {
     try {
-      const customerMemberships = await storage.getAllCustomerMemberships();
+      const customerMemberships = await storage.getCustomerMembershipsBySpaId(req.adminSpa.id);
       res.json(customerMemberships);
     } catch (error) {
       handleRouteError(res, error, "Failed to fetch customer memberships");
@@ -2947,14 +2947,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Staff Timesheet routes
-  app.get("/api/admin/timesheets", isAdmin, async (req: any, res) => {
+  // Staff Timesheet routes - Filter by admin's spaId for multi-tenant isolation
+  app.get("/api/admin/timesheets", isAdmin, injectAdminSpa, async (req: any, res) => {
     try {
-      const filters: any = {};
+      const filters: any = {
+        spaId: req.adminSpa.id  // Always filter by admin's spa
+      };
       
-      if (req.adminSpaId) {
-        filters.spaId = req.adminSpaId;
-      }
       if (req.query.staffId) {
         filters.staffId = parseNumericId(req.query.staffId);
       }
@@ -3899,10 +3898,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Transaction routes (for manual sales)
-  app.get("/api/admin/transactions", isAdmin, async (req, res) => {
+  // Transaction routes (for manual sales) - Filter by admin's spaId for multi-tenant isolation
+  app.get("/api/admin/transactions", isAdmin, injectAdminSpa, async (req: any, res) => {
     try {
-      const transactions = await storage.getAllTransactions();
+      const transactions = await storage.getTransactionsBySpaId(req.adminSpa.id);
       res.json(transactions);
     } catch (error) {
       console.error("Error fetching transactions:", error);
@@ -3910,10 +3909,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/admin/sales", isAdmin, async (req, res) => {
+  app.post("/api/admin/sales", isAdmin, injectAdminSpa, async (req: any, res) => {
     try {
       const validatedData = insertTransactionSchema.parse(req.body);
-      const transaction = await storage.createTransaction(validatedData);
+      const transaction = await storage.createTransaction({ ...validatedData, spaId: req.adminSpa.id });
       res.json(transaction);
     } catch (error: any) {
       if (error.name === "ZodError") {
@@ -3924,10 +3923,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Loyalty Card routes
-  app.get("/api/admin/loyalty-cards", isAdmin, async (req, res) => {
+  // Loyalty Card routes - Filter by admin's spaId for multi-tenant isolation
+  app.get("/api/admin/loyalty-cards", isAdmin, injectAdminSpa, async (req: any, res) => {
     try {
-      const cards = await storage.getAllLoyaltyCards();
+      const cards = await storage.getLoyaltyCardsBySpaId(req.adminSpa.id);
       res.json(cards);
     } catch (error) {
       console.error("Error fetching loyalty cards:", error);
@@ -4075,10 +4074,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Product Sales routes
-  app.get("/api/admin/product-sales", isAdmin, async (req, res) => {
+  // Product Sales routes - Filter by admin's spaId for multi-tenant isolation
+  app.get("/api/admin/product-sales", isAdmin, injectAdminSpa, async (req: any, res) => {
     try {
-      const sales = await storage.getAllProductSales();
+      const sales = await storage.getProductSalesBySpaId(req.adminSpa.id);
       res.json(sales);
     } catch (error) {
       console.error("Error fetching product sales:", error);
@@ -4170,9 +4169,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Finance: Vendors routes
-  app.get("/api/admin/vendors", isAdmin, async (req, res) => {
+  // Vendor routes - Filter by admin's spaId for multi-tenant isolation
+  app.get("/api/admin/vendors", isAdmin, injectAdminSpa, async (req: any, res) => {
     try {
-      const vendors = await storage.getAllVendors();
+      const vendors = await storage.getVendorsBySpaId(req.adminSpa.id);
       res.json(vendors);
     } catch (error) {
       handleRouteError(res, error, "Failed to fetch vendors");
@@ -4195,10 +4195,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/admin/vendors", isAdmin, async (req, res) => {
+  app.post("/api/admin/vendors", isAdmin, injectAdminSpa, async (req: any, res) => {
     try {
       const validatedData = insertVendorSchema.parse(req.body);
-      const vendor = await storage.createVendor(validatedData);
+      const vendor = await storage.createVendor({ ...validatedData, spaId: req.adminSpa.id });
       res.json(vendor);
     } catch (error) {
       handleRouteError(res, error, "Failed to create vendor");
@@ -4239,9 +4239,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Finance: Expenses routes
-  app.get("/api/admin/expenses", isAdmin, async (req, res) => {
+  // Expense routes - Filter by admin's spaId for multi-tenant isolation
+  app.get("/api/admin/expenses", isAdmin, injectAdminSpa, async (req: any, res) => {
     try {
-      const expenses = await storage.getAllExpenses();
+      const expenses = await storage.getExpensesBySpaId(req.adminSpa.id);
       res.json(expenses);
     } catch (error) {
       handleRouteError(res, error, "Failed to fetch expenses");
@@ -4264,10 +4265,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/admin/expenses", isAdmin, async (req, res) => {
+  app.post("/api/admin/expenses", isAdmin, injectAdminSpa, async (req: any, res) => {
     try {
       const validatedData = insertExpenseSchema.parse(req.body);
-      const expense = await storage.createExpense(validatedData);
+      const expense = await storage.createExpense({ ...validatedData, spaId: req.adminSpa.id });
       res.json(expense);
     } catch (error) {
       handleRouteError(res, error, "Failed to create expense");
@@ -4308,9 +4309,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Finance: Bills routes
-  app.get("/api/admin/bills", isAdmin, async (req, res) => {
+  // Bill routes - Filter by admin's spaId for multi-tenant isolation
+  app.get("/api/admin/bills", isAdmin, injectAdminSpa, async (req: any, res) => {
     try {
-      const bills = await storage.getAllBills();
+      const bills = await storage.getBillsBySpaId(req.adminSpa.id);
       res.json(bills);
     } catch (error) {
       handleRouteError(res, error, "Failed to fetch bills");
@@ -4333,10 +4335,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/admin/bills", isAdmin, async (req, res) => {
+  app.post("/api/admin/bills", isAdmin, injectAdminSpa, async (req: any, res) => {
     try {
       const validatedData = insertBillSchema.parse(req.body);
-      const bill = await storage.createBill(validatedData);
+      const bill = await storage.createBill({ ...validatedData, spaId: req.adminSpa.id });
       res.json(bill);
     } catch (error) {
       handleRouteError(res, error, "Failed to create bill");
