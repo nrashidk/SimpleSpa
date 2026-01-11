@@ -196,12 +196,12 @@ function handleRouteError(res: any, error: any, message: string) {
   // Generate error ID for tracking
   const errorId = generateErrorId();
   
-  // Log full error details for debugging (server-side only)
-  console.error(`[${errorId}] ${message}:`, {
+  // Log full error details for debugging (server-side only) using structured logger
+  logger.error(`[${errorId}] ${message}`, {
+    errorId,
     error: error.message,
-    stack: error.stack,
     code: error.code,
-    timestamp: new Date().toISOString()
+    stack: process.env.NODE_ENV !== 'production' ? error.stack : undefined
   });
   
   // Production: Return generic message with error ID for support
@@ -346,7 +346,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       logger.info("License document uploaded", { filename: req.file.filename });
       res.json({ fileUrl });
     } catch (error) {
-      console.error('License upload error:', error);
+      logger.error('License upload error', { error: error instanceof Error ? error.message : 'Unknown' });
       res.status(500).json({ message: 'Failed to upload license document' });
     }
   });
@@ -383,7 +383,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Serve the file
       res.sendFile(filePath);
     } catch (error) {
-      console.error('Error serving file:', error);
+      logger.error('Error serving file', { error: error instanceof Error ? error.message : 'Unknown' });
       res.status(500).json({ message: 'Error serving file' });
     }
   });
@@ -644,7 +644,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           user: { id: superAdminUser.id, email: superAdminUser.email, role: superAdminUser.role }
         });
       } catch (error) {
-        console.error("Create super admin error:", error);
+        logger.error("Create super admin error", { error: error instanceof Error ? error.message : 'Unknown' });
         res.status(500).json({ message: "Failed to create super admin" });
       }
     });
@@ -1057,7 +1057,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Redirect back to settings with success message
       res.redirect(`/admin/settings?oauth_success=${integrationType}`);
     } catch (error) {
-      console.error('OAuth callback error:', error);
+      logger.error('OAuth callback error', { error: error instanceof Error ? error.message : 'Unknown' });
       res.redirect('/admin/settings?oauth_error=exchange_failed');
     }
   });
@@ -1283,7 +1283,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           bookingDate = new Date(`${date}T${time}:00`);
         }
       } catch (error) {
-        console.error('Error parsing date/time:', error);
+        logger.error('Error parsing date/time', { error: error instanceof Error ? error.message : 'Unknown' });
         return res.status(400).json({ message: 'Invalid date or time format' });
       }
 
@@ -1404,25 +1404,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
                       undefined,
                       templateData
                     ).catch((err: Error) => {
-                      console.error('Error sending VAT threshold notification:', err);
+                      logger.error('Error sending VAT threshold notification', { error: err instanceof Error ? err.message : 'Unknown' });
                       // Note: We've already updated the flag, so won't retry until next year
                       // This prevents notification spam even if email delivery fails
                     });
                   } else {
-                    console.warn('No admin email found for spa', spaId, '- VAT threshold reached but notification not sent');
+                    logger.warn('No admin email found for spa - VAT threshold reached but notification not sent', { spaId });
                   }
                 } else {
-                  console.error('Failed to update lastThresholdNotificationYear for spa', spaId, '- skipping notification to prevent duplicates');
+                  logger.error('Failed to update lastThresholdNotificationYear for spa - skipping notification to prevent duplicates', { spaId });
                 }
               }
             } catch (error) {
-              console.error('Error checking VAT threshold:', error);
+              logger.error('Error checking VAT threshold', { error: error instanceof Error ? error.message : 'Unknown' });
               // Don't fail the booking if threshold check fails
             }
           }
         }
       } catch (error) {
-        console.error('Error creating invoice for booking:', error);
+        logger.error('Error creating invoice for booking', { error: error instanceof Error ? error.message : 'Unknown' });
         // Don't fail the booking if invoice creation fails
       }
 
@@ -1487,7 +1487,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             );
           }
         } catch (error) {
-          console.error('Failed to send booking confirmation:', error);
+          logger.error('Failed to send booking confirmation', { error: error instanceof Error ? error.message : 'Unknown' });
         }
       })();
 
@@ -1651,7 +1651,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               );
             }
           } catch (error) {
-            console.error('Failed to send booking cancellation notification:', error);
+            logger.error('Failed to send booking cancellation notification', { error: error instanceof Error ? error.message : 'Unknown' });
           }
         })();
       }
@@ -1785,7 +1785,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               );
             }
           } catch (error) {
-            console.error('Failed to send booking modification notification:', error);
+            logger.error('Failed to send booking modification notification', { error: error instanceof Error ? error.message : 'Unknown' });
           }
         })();
       }
@@ -2265,7 +2265,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         vatRegistrationDate: updatedSpa?.vatRegistrationDate || null,
       });
     } catch (error) {
-      console.error("Error updating VAT settings:", error);
+      logger.error("Error updating VAT settings", { error: error instanceof Error ? error.message : 'Unknown' });
       res.status(500).json({ message: "Failed to update VAT settings" });
     }
   });
@@ -2299,7 +2299,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         remainingToThreshold: thresholdCheck.remainingToThreshold,
       });
     } catch (error) {
-      console.error("Error fetching VAT threshold reminder settings:", error);
+      logger.error("Error fetching VAT threshold reminder settings", { error: error instanceof Error ? error.message : 'Unknown' });
       res.status(500).json({ message: "Failed to fetch threshold reminder settings" });
     }
   });
@@ -2333,7 +2333,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         vatThresholdAmount: updatedSpa?.vatThresholdAmount || "375000.00",
       });
     } catch (error) {
-      console.error("Error updating VAT threshold reminder settings:", error);
+      logger.error("Error updating VAT threshold reminder settings", { error: error instanceof Error ? error.message : 'Unknown' });
       res.status(500).json({ message: "Failed to update threshold reminder settings" });
     }
   });
@@ -2391,7 +2391,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json({ message: "Invoice deleted successfully" });
     } catch (error) {
-      console.error("Error deleting invoice:", error);
+      logger.error("Error deleting invoice", { error: error instanceof Error ? error.message : 'Unknown' });
       res.status(500).json({ message: "Failed to delete invoice" });
     }
   });
@@ -2407,7 +2407,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const settings = await storage.getNotificationSettings(user.adminSpaId);
       res.json(settings || {});
     } catch (error) {
-      console.error("Error fetching notification settings:", error);
+      logger.error("Error fetching notification settings", { error: error instanceof Error ? error.message : 'Unknown' });
       res.status(500).json({ message: "Failed to fetch notification settings" });
     }
   });
@@ -2422,7 +2422,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const settings = await storage.upsertNotificationSettings(user.adminSpaId, req.body);
       res.json(settings);
     } catch (error) {
-      console.error("Error updating notification settings:", error);
+      logger.error("Error updating notification settings", { error: error instanceof Error ? error.message : 'Unknown' });
       res.status(500).json({ message: "Failed to update notification settings" });
     }
   });
@@ -2433,7 +2433,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const categories = await storage.getServiceCategoriesBySpaId(req.adminSpa.id);
       res.json(categories);
     } catch (error) {
-      console.error("Error fetching service categories:", error);
+      logger.error("Error fetching service categories", { error: error instanceof Error ? error.message : 'Unknown' });
       res.status(500).json({ message: "Failed to fetch service categories" });
     }
   });
@@ -2448,10 +2448,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const category = await storage.createServiceCategory(validatedData);
       res.json(category);
     } catch (error) {
-      console.error("Error creating service category:", error);
-      if (error instanceof Error) {
-        console.error("Error details:", error.message);
-      }
+      logger.error("Error creating service category", { error: error instanceof Error ? error.message : 'Unknown' });
       handleRouteError(res, error, "Failed to create service category");
     }
   });
@@ -2497,7 +2494,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const services = await storage.getServicesBySpaId(req.adminSpa.id);
       res.json(services);
     } catch (error) {
-      console.error("Error fetching services:", error);
+      logger.error("Error fetching services", { error: error instanceof Error ? error.message : 'Unknown' });
       res.status(500).json({ message: "Failed to fetch services" });
     }
   });
@@ -2516,10 +2513,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       res.json(service);
     } catch (error) {
-      console.error("Error creating service:", error);
-      if (error instanceof Error) {
-        console.error("Error details:", error.message);
-      }
+      logger.error("Error creating service", { error: error instanceof Error ? error.message : 'Unknown' });
       handleRouteError(res, error, "Failed to create service");
     }
   });
@@ -2848,7 +2842,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const staff = await storage.getStaffBySpaId(req.adminSpa.id);
       res.json(staff);
     } catch (error) {
-      console.error("Error fetching staff:", error);
+      logger.error("Error fetching staff", { error: error instanceof Error ? error.message : 'Unknown' });
       res.status(500).json({ message: "Failed to fetch staff" });
     }
   });
@@ -2867,10 +2861,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       res.json(staffMember);
     } catch (error) {
-      console.error("Error creating staff member:", error);
-      if (error instanceof Error) {
-        console.error("Error details:", error.message);
-      }
+      logger.error("Error creating staff member", { error: error instanceof Error ? error.message : 'Unknown' });
       handleRouteError(res, error, "Failed to create staff member");
     }
   });
@@ -2941,7 +2932,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const schedules = await storage.getStaffSchedules(staffId);
       res.json(schedules);
     } catch (error) {
-      console.error("Error fetching staff schedules:", error);
+      logger.error("Error fetching staff schedules", { error: error instanceof Error ? error.message : 'Unknown' });
       res.status(500).json({ message: "Failed to fetch staff schedules" });
     }
   });
@@ -2956,7 +2947,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const schedule = await storage.createStaffSchedule(validatedData);
       res.json(schedule);
     } catch (error) {
-      console.error("Error creating staff schedule:", error);
+      logger.error("Error creating staff schedule", { error: error instanceof Error ? error.message : 'Unknown' });
       res.status(500).json({ message: "Failed to create staff schedule" });
     }
   });
@@ -2973,7 +2964,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       res.json({ success: true });
     } catch (error) {
-      console.error("Error deleting staff schedule:", error);
+      logger.error("Error deleting staff schedule", { error: error instanceof Error ? error.message : 'Unknown' });
       res.status(500).json({ message: "Failed to delete staff schedule" });
     }
   });
@@ -3189,7 +3180,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const products = await storage.getProductsBySpaId(req.adminSpa.id);
       res.json(products);
     } catch (error) {
-      console.error("Error fetching products:", error);
+      logger.error("Error fetching products", { error: error instanceof Error ? error.message : 'Unknown' });
       res.status(500).json({ message: "Failed to fetch products" });
     }
   });
@@ -3254,7 +3245,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       res.json({ success: true });
     } catch (error) {
-      console.error("Error deleting product:", error);
+      logger.error("Error deleting product", { error: error instanceof Error ? error.message : 'Unknown' });
       res.status(500).json({ message: "Failed to delete product" });
     }
   });
@@ -3357,15 +3348,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Booking routes - with staff permission enforcement
-  app.get("/api/admin/bookings", requireStaffRole(staffRoles.VIEW_OWN), async (req: any, res) => {
+  app.get("/api/admin/bookings", requireStaffRole(staffRoles.VIEW_OWN), injectAdminSpa, async (req: any, res) => {
     try {
       const userId = req.user.claims.sub;
       const user = await storage.getUser(userId);
+      const spaId = req.adminSpa.id;
       
-      // Admins see all bookings
+      // Admins see all bookings for their spa
       const isAdminUser = user?.role === "admin" || user?.role === "super_admin";
       
-      let bookings = await storage.getAllBookings();
+      // Use spa-filtered query at database level for performance
+      let bookings = await storage.getBookingsBySpaId(spaId);
       
       // For staff, filter based on role
       if (!isAdminUser) {
@@ -3383,6 +3376,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // If VIEW_ALL or higher, show all bookings (no filter needed)
       }
       
+      // Fetch services once for performance (spa-filtered)
+      const allServices = await storage.getServicesBySpaId(spaId);
+      
       // Enrich bookings with related data
       const enrichedBookings = await Promise.all(
         bookings.map(async (booking) => {
@@ -3390,7 +3386,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const staff = booking.staffId ? await storage.getStaffById(booking.staffId) : null;
           const bookingItems = await storage.getBookingItemsByBookingId(booking.id);
           
-          const allServices = await storage.getAllServices();
           const services = bookingItems.map((item) => {
             return allServices.find((s: any) => s.id === item.serviceId);
           }).filter(Boolean);
@@ -3407,7 +3402,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json(enrichedBookings);
     } catch (error) {
-      console.error("Error fetching bookings:", error);
+      logger.error("Error fetching bookings", { error: error instanceof Error ? error.message : 'Unknown' });
       res.status(500).json({ message: "Failed to fetch bookings" });
     }
   });
@@ -3432,7 +3427,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       res.json(booking);
     } catch (error) {
-      console.error("Error creating booking:", error);
+      logger.error("Error creating booking", { error: error instanceof Error ? error.message : 'Unknown' });
       res.status(500).json({ message: "Failed to create booking" });
     }
   });
@@ -3482,7 +3477,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (error.name === "ZodError") {
         return res.status(400).json({ message: "Invalid booking data", errors: error.errors });
       }
-      console.error("Error updating booking:", error);
+      logger.error("Error updating booking", { error: error instanceof Error ? error.message : 'Unknown' });
       res.status(500).json({ message: "Failed to update booking" });
     }
   });
@@ -3504,7 +3499,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json({ success: true });
     } catch (error) {
-      console.error("Error deleting booking:", error);
+      logger.error("Error deleting booking", { error: error instanceof Error ? error.message : 'Unknown' });
       res.status(500).json({ message: "Failed to delete booking" });
     }
   });
@@ -3515,7 +3510,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const items = await storage.getAllBookingItems();
       res.json(items);
     } catch (error) {
-      console.error("Error fetching booking items:", error);
+      logger.error("Error fetching booking items", { error: error instanceof Error ? error.message : 'Unknown' });
       res.status(500).json({ message: "Failed to fetch booking items" });
     }
   });
@@ -3529,7 +3524,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const items = await storage.getBookingItemsByBookingId(bookingId);
       res.json(items);
     } catch (error) {
-      console.error("Error fetching booking items:", error);
+      logger.error("Error fetching booking items", { error: error instanceof Error ? error.message : 'Unknown' });
       res.status(500).json({ message: "Failed to fetch booking items" });
     }
   });
@@ -3541,7 +3536,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const customers = await storage.getCustomersBySpaId(req.adminSpa.id);
       res.json(customers);
     } catch (error) {
-      console.error("Error fetching customers:", error);
+      logger.error("Error fetching customers", { error: error instanceof Error ? error.message : 'Unknown' });
       res.status(500).json({ message: "Failed to fetch customers" });
     }
   });
@@ -3807,10 +3802,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Export customers to CSV
-  app.get("/api/admin/customers/export", isAdmin, injectAdminSpa, async (req, res) => {
+  app.get("/api/admin/customers/export", isAdmin, injectAdminSpa, async (req: any, res) => {
     try {
-      const { parseCustomersCSV, customersToCSV } = await import('./csvUtils');
-      const customers = await storage.getAllCustomers();
+      const { customersToCSV } = await import('./csvUtils');
+      // Use spa-filtered query for multi-tenant isolation
+      const customers = await storage.getCustomersBySpaId(req.adminSpa.id);
       const csvContent = customersToCSV(customers);
 
       res.setHeader('Content-Type', 'text/csv');
@@ -3924,7 +3920,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (error.name === "ZodError") {
         return res.status(400).json({ message: "Invalid customer data", errors: error.errors });
       }
-      console.error("Error creating customer:", error);
+      logger.error("Error creating customer", { error: error instanceof Error ? error.message : 'Unknown' });
       res.status(500).json({ message: "Failed to create customer" });
     }
   });
@@ -3935,7 +3931,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const transactions = await storage.getTransactionsBySpaId(req.adminSpa.id);
       res.json(transactions);
     } catch (error) {
-      console.error("Error fetching transactions:", error);
+      logger.error("Error fetching transactions", { error: error instanceof Error ? error.message : 'Unknown' });
       res.status(500).json({ message: "Failed to fetch transactions" });
     }
   });
@@ -3949,7 +3945,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (error.name === "ZodError") {
         return res.status(400).json({ message: "Invalid transaction data", errors: error.errors });
       }
-      console.error("Error creating sale:", error);
+      logger.error("Error creating sale", { error: error instanceof Error ? error.message : 'Unknown' });
       res.status(500).json({ message: "Failed to create sale" });
     }
   });
@@ -3960,7 +3956,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const cards = await storage.getLoyaltyCardsBySpaId(req.adminSpa.id);
       res.json(cards);
     } catch (error) {
-      console.error("Error fetching loyalty cards:", error);
+      logger.error("Error fetching loyalty cards", { error: error instanceof Error ? error.message : 'Unknown' });
       res.status(500).json({ message: "Failed to fetch loyalty cards" });
     }
   });
@@ -3982,7 +3978,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       res.json(card);
     } catch (error) {
-      console.error("Error fetching loyalty card:", error);
+      logger.error("Error fetching loyalty card", { error: error instanceof Error ? error.message : 'Unknown' });
       res.status(500).json({ message: "Failed to fetch loyalty card" });
     }
   });
@@ -3996,7 +3992,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const cards = await storage.getLoyaltyCardsByCustomerId(customerId);
       res.json(cards);
     } catch (error) {
-      console.error("Error fetching customer loyalty cards:", error);
+      logger.error("Error fetching customer loyalty cards", { error: error instanceof Error ? error.message : 'Unknown' });
       res.status(500).json({ message: "Failed to fetch customer loyalty cards" });
     }
   });
@@ -4010,7 +4006,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (error.name === "ZodError") {
         return res.status(400).json({ message: "Invalid loyalty card data", errors: error.errors });
       }
-      console.error("Error creating loyalty card:", error);
+      logger.error("Error creating loyalty card", { error: error instanceof Error ? error.message : 'Unknown' });
       res.status(500).json({ message: "Failed to create loyalty card" });
     }
   });
@@ -4037,7 +4033,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (error.name === "ZodError") {
         return res.status(400).json({ message: "Invalid loyalty card data", errors: error.errors });
       }
-      console.error("Error updating loyalty card:", error);
+      logger.error("Error updating loyalty card", { error: error instanceof Error ? error.message : 'Unknown' });
       res.status(500).json({ message: "Failed to update loyalty card" });
     }
   });
@@ -4060,7 +4056,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const deleted = await storage.deleteLoyaltyCard(id);
       res.json({ success: true });
     } catch (error) {
-      console.error("Error deleting loyalty card:", error);
+      logger.error("Error deleting loyalty card", { error: error instanceof Error ? error.message : 'Unknown' });
       res.status(500).json({ message: "Failed to delete loyalty card" });
     }
   });
@@ -4075,7 +4071,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const usage = await storage.getLoyaltyCardUsageByCardId(cardId);
       res.json(usage);
     } catch (error) {
-      console.error("Error fetching loyalty card usage:", error);
+      logger.error("Error fetching loyalty card usage", { error: error instanceof Error ? error.message : 'Unknown' });
       res.status(500).json({ message: "Failed to fetch loyalty card usage" });
     }
   });
@@ -4117,7 +4113,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (error.name === "ZodError") {
         return res.status(400).json({ message: "Invalid usage data", errors: error.errors });
       }
-      console.error("Error recording loyalty card usage:", error);
+      logger.error("Error recording loyalty card usage", { error: error instanceof Error ? error.message : 'Unknown' });
       res.status(500).json({ message: "Failed to record loyalty card usage" });
     }
   });
@@ -4128,7 +4124,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const sales = await storage.getProductSalesBySpaId(req.adminSpa.id);
       res.json(sales);
     } catch (error) {
-      console.error("Error fetching product sales:", error);
+      logger.error("Error fetching product sales", { error: error instanceof Error ? error.message : 'Unknown' });
       res.status(500).json({ message: "Failed to fetch product sales" });
     }
   });
@@ -4152,7 +4148,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       res.json(sale);
     } catch (error) {
-      console.error("Error fetching product sale:", error);
+      logger.error("Error fetching product sale", { error: error instanceof Error ? error.message : 'Unknown' });
       res.status(500).json({ message: "Failed to fetch product sale" });
     }
   });
@@ -4166,7 +4162,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const sales = await storage.getProductSalesByCustomerId(customerId);
       res.json(sales);
     } catch (error) {
-      console.error("Error fetching customer product sales:", error);
+      logger.error("Error fetching customer product sales", { error: error instanceof Error ? error.message : 'Unknown' });
       res.status(500).json({ message: "Failed to fetch customer product sales" });
     }
   });
@@ -4180,7 +4176,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (error.name === "ZodError") {
         return res.status(400).json({ message: "Invalid product sale data", errors: error.errors });
       }
-      console.error("Error creating product sale:", error);
+      logger.error("Error creating product sale", { error: error instanceof Error ? error.message : 'Unknown' });
       res.status(500).json({ message: "Failed to create product sale" });
     }
   });
@@ -4209,7 +4205,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (error.name === "ZodError") {
         return res.status(400).json({ message: "Invalid product sale data", errors: error.errors });
       }
-      console.error("Error updating product sale:", error);
+      logger.error("Error updating product sale", { error: error instanceof Error ? error.message : 'Unknown' });
       res.status(500).json({ message: "Failed to update product sale" });
     }
   });
@@ -4234,7 +4230,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const deleted = await storage.deleteProductSale(id);
       res.json({ success: true });
     } catch (error) {
-      console.error("Error deleting product sale:", error);
+      logger.error("Error deleting product sale", { error: error instanceof Error ? error.message : 'Unknown' });
       res.status(500).json({ message: "Failed to delete product sale" });
     }
   });
@@ -4912,9 +4908,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ==================== FINANCE & ACCOUNTING REPORTS ====================
   
   // Finance Summary Report
-  app.get("/api/admin/reports/finance-summary", isAuthenticated, isAdmin, injectAdminSpa, async (req, res) => {
+  app.get("/api/admin/reports/finance-summary", isAuthenticated, isAdmin, injectAdminSpa, async (req: any, res) => {
     try {
-      const spaId = (req as any).adminSpaId;
+      const spaId = req.adminSpa.id;
       const { startDate, endDate } = req.query;
       
       if (!startDate || !endDate) {
@@ -4924,36 +4920,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const start = new Date(startDate as string);
       const end = new Date(endDate as string);
       
-      // Step 1: Get all bookings for this spa in the date range
-      const allBookings = await storage.getAllBookings();
-      const spaBookings = allBookings.filter((booking: any) => {
+      // Use spa-filtered queries at database level for performance
+      const spaBookingsAll = await storage.getBookingsBySpaId(spaId);
+      const spaBookings = spaBookingsAll.filter((booking: any) => {
         const bookingDate = new Date(booking.bookingDate);
-        return bookingDate >= start && bookingDate <= end && booking.spaId === spaId;
+        return bookingDate >= start && bookingDate <= end;
       });
       const spaBookingIds = new Set(spaBookings.map((b: any) => b.id));
       
-      // Step 2: Get staff for this spa (for product sales)
-      const allStaff = await storage.getAllStaff();
-      const spaStaff = allStaff.filter((staff: any) => staff.spaId === spaId);
+      const spaStaff = await storage.getStaffBySpaId(spaId);
       const spaStaffIds = new Set(spaStaff.map((s: any) => s.id));
       
-      // Step 3: Get product sales by this spa's staff
-      const allProductSales = await storage.getAllProductSales();
-      const spaProductSales = allProductSales.filter((sale: any) => {
+      // Get product sales by this spa's staff (spa-filtered)
+      const spaProductSalesAll = await storage.getProductSalesBySpaId(spaId);
+      const spaProductSales = spaProductSalesAll.filter((sale: any) => {
         const saleDate = new Date(sale.saleDate);
-        const isInDateRange = saleDate >= start && saleDate <= end;
-        const isForSpa = sale.soldBy && spaStaffIds.has(sale.soldBy);
-        return isInDateRange && isForSpa;
+        return saleDate >= start && saleDate <= end;
       });
       const productSaleInvoiceIds = new Set(spaProductSales.map((ps: any) => ps.invoiceId).filter(Boolean));
       
-      // Step 4: Get membership purchases for this spa
-      const allMembershipDefs = await storage.getAllMemberships();
-      const spaMembershipDefs = allMembershipDefs.filter((def: any) => def.spaId === spaId);
+      // Get membership purchases for this spa (spa-filtered)
+      const spaMembershipDefs = await storage.getMembershipsBySpaId(spaId);
       const spaMembershipDefIds = new Set(spaMembershipDefs.map((def: any) => def.id));
       
-      const allMemberships = await storage.getAllCustomerMemberships();
-      const spaMemberships = allMemberships.filter((membership: any) => {
+      const spaMembershipsAll = await storage.getCustomerMembershipsBySpaId(spaId);
+      const spaMemberships = spaMembershipsAll.filter((membership: any) => {
         const purchaseDate = new Date(membership.purchaseDate);
         const isInDateRange = purchaseDate >= start && purchaseDate <= end;
         const isForSpa = membership.membershipId && spaMembershipDefIds.has(membership.membershipId);
@@ -4961,9 +4952,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       const membershipInvoiceIds = new Set(spaMemberships.map((m: any) => m.invoiceId).filter(Boolean));
       
-      // Step 5: Get all invoices for this spa (booking-linked, product sales, membership purchases)
-      const allInvoices = await storage.getAllInvoices();
-      const spaInvoices = allInvoices.filter((inv: any) => {
+      // Get invoices for this spa (spa-filtered)
+      const spaInvoicesAll = await storage.getInvoicesBySpaId(spaId);
+      const spaInvoices = spaInvoicesAll.filter((inv: any) => {
         const invDate = new Date(inv.issueDate);
         const isInDateRange = invDate >= start && invDate <= end;
         const isForSpa = 
@@ -4974,31 +4965,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       const spaInvoiceIds = new Set(spaInvoices.map((inv: any) => inv.id));
       
-      // Step 3: Get transactions linked to these invoices (spa-filtered payments)
-      const allTransactions = await storage.getAllTransactions();
-      const spaTransactions = allTransactions.filter((txn: any) => {
+      // Get transactions for this spa (spa-filtered)
+      const spaTransactionsAll = await storage.getTransactionsBySpaId(spaId);
+      const spaTransactions = spaTransactionsAll.filter((txn: any) => {
         const txnDate = new Date(txn.transactionDate);
         const isInDateRange = txnDate >= start && txnDate <= end;
         const isForSpa = txn.invoiceId && spaInvoiceIds.has(txn.invoiceId);
         return isInDateRange && isForSpa;
       });
       
-      // Step 4: Get services for this spa to filter loyalty cards
-      const allServices = await storage.getAllServices();
-      const spaServices = allServices.filter((service: any) => service.spaId === spaId);
+      // Get services and loyalty cards for this spa (spa-filtered)
+      const spaServices = await storage.getServicesBySpaId(spaId);
       const spaServiceIds = new Set(spaServices.map((s: any) => s.id));
       
-      // Step 5: Get loyalty cards for this spa's services in date range
-      const allLoyaltyCards = await storage.getAllLoyaltyCards();
-      const spaLoyaltyCards = allLoyaltyCards.filter((card: any) => {
+      const spaLoyaltyCardsAll = await storage.getLoyaltyCardsBySpaId(spaId);
+      const spaLoyaltyCards = spaLoyaltyCardsAll.filter((card: any) => {
         const purchaseDate = new Date(card.purchaseDate);
         const isInDateRange = purchaseDate >= start && purchaseDate <= end;
         const isForSpa = card.serviceId && spaServiceIds.has(card.serviceId);
         return isInDateRange && isForSpa;
       });
-      const spaLoyaltyCardIds = new Set(spaLoyaltyCards.map((c: any) => c.id));
       
-      // Step 6: Get loyalty usage for this spa's bookings
+      // Get loyalty usage for this spa's bookings
       const allLoyaltyUsage = await storage.getAllLoyaltyCardUsage();
       const spaLoyaltyUsage = allLoyaltyUsage.filter((usage: any) => {
         const usedAt = new Date(usage.usedAt);
@@ -5085,9 +5073,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // Sales Summary Report
-  app.get("/api/admin/reports/sales-summary", isAuthenticated, isAdmin, injectAdminSpa, async (req, res) => {
+  app.get("/api/admin/reports/sales-summary", isAuthenticated, isAdmin, injectAdminSpa, async (req: any, res) => {
     try {
-      const spaId = (req as any).adminSpaId;
+      const spaId = req.adminSpa.id;
       const { startDate, endDate } = req.query;
       
       if (!startDate || !endDate) {
@@ -5097,34 +5085,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const start = new Date(startDate as string);
       const end = new Date(endDate as string);
       
-      // Get bookings (services) for this spa
-      const allBookings = await storage.getAllBookings();
-      const bookings = allBookings.filter((booking: any) => {
+      // Get bookings (services) for this spa - spa-filtered
+      const spaBookingsAll = await storage.getBookingsBySpaId(spaId);
+      const bookings = spaBookingsAll.filter((booking: any) => {
         const bookingDate = new Date(booking.bookingDate);
-        return bookingDate >= start && bookingDate <= end && booking.spaId === spaId;
+        return bookingDate >= start && bookingDate <= end;
       });
       
-      // Get staff for this spa to filter product sales
-      const allStaff = await storage.getAllStaff();
-      const spaStaff = allStaff.filter((staff: any) => staff.spaId === spaId);
+      // Get staff for this spa (spa-filtered)
+      const spaStaff = await storage.getStaffBySpaId(spaId);
       const spaStaffIds = new Set(spaStaff.map((s: any) => s.id));
       
-      // Get product sales sold by this spa's staff
-      const allProductSales = await storage.getAllProductSales();
-      const productSales = allProductSales.filter((sale: any) => {
+      // Get product sales sold by this spa's staff (spa-filtered)
+      const spaProductSalesAll = await storage.getProductSalesBySpaId(spaId);
+      const productSales = spaProductSalesAll.filter((sale: any) => {
         const saleDate = new Date(sale.saleDate);
-        const isInDateRange = saleDate >= start && saleDate <= end;
-        const isForSpa = sale.soldBy && spaStaffIds.has(sale.soldBy);
-        return isInDateRange && isForSpa;
+        return saleDate >= start && saleDate <= end;
       });
       
-      // Get memberships for this spa (through membership definition's spaId)
-      const allMemberships = await storage.getAllCustomerMemberships();
-      const allMembershipDefs = await storage.getAllMemberships();
-      const spaMembershipDefs = allMembershipDefs.filter((def: any) => def.spaId === spaId);
+      // Get memberships for this spa (spa-filtered)
+      const spaMembershipsAll = await storage.getCustomerMembershipsBySpaId(spaId);
+      const spaMembershipDefs = await storage.getMembershipsBySpaId(spaId);
       const spaMembershipDefIds = new Set(spaMembershipDefs.map((def: any) => def.id));
       
-      const membershipPurchases = allMemberships.filter((membership: any) => {
+      const membershipPurchases = spaMembershipsAll.filter((membership: any) => {
         const purchaseDate = new Date(membership.purchaseDate);
         const isInDateRange = purchaseDate >= start && purchaseDate <= end;
         const isForSpa = membership.membershipId && spaMembershipDefIds.has(membership.membershipId);
@@ -5196,9 +5180,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // Sales List Report
-  app.get("/api/admin/reports/sales-list", isAuthenticated, isAdmin, injectAdminSpa, async (req, res) => {
+  app.get("/api/admin/reports/sales-list", isAuthenticated, isAdmin, injectAdminSpa, async (req: any, res) => {
     try {
-      const spaId = (req as any).adminSpaId;
+      const spaId = req.adminSpa.id;
       const { startDate, endDate } = req.query;
       
       if (!startDate || !endDate) {
@@ -5208,36 +5192,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const start = new Date(startDate as string);
       const end = new Date(endDate as string);
       
-      // Get all spa-related data for invoice filtering
-      const allBookings = await storage.getAllBookings();
-      const spaBookings = allBookings.filter((booking: any) => {
+      // Use spa-filtered queries for performance
+      const spaBookingsAll = await storage.getBookingsBySpaId(spaId);
+      const spaBookings = spaBookingsAll.filter((booking: any) => {
         const bookingDate = new Date(booking.bookingDate);
-        return bookingDate >= start && bookingDate <= end && booking.spaId === spaId;
+        return bookingDate >= start && bookingDate <= end;
       });
       const spaBookingIds = new Set(spaBookings.map((b: any) => b.id));
       
-      // Get staff for this spa (for product sales)
-      const allStaff = await storage.getAllStaff();
-      const spaStaff = allStaff.filter((staff: any) => staff.spaId === spaId);
-      const spaStaffIds = new Set(spaStaff.map((s: any) => s.id));
-      
-      // Get product sales by this spa's staff
-      const allProductSales = await storage.getAllProductSales();
-      const spaProductSales = allProductSales.filter((sale: any) => {
+      // Get product sales (spa-filtered)
+      const spaProductSalesAll = await storage.getProductSalesBySpaId(spaId);
+      const spaProductSales = spaProductSalesAll.filter((sale: any) => {
         const saleDate = new Date(sale.saleDate);
-        const isInDateRange = saleDate >= start && saleDate <= end;
-        const isForSpa = sale.soldBy && spaStaffIds.has(sale.soldBy);
-        return isInDateRange && isForSpa;
+        return saleDate >= start && saleDate <= end;
       });
       const productSaleInvoiceIds = new Set(spaProductSales.map((ps: any) => ps.invoiceId).filter(Boolean));
       
-      // Get membership purchases for this spa
-      const allMembershipDefs = await storage.getAllMemberships();
-      const spaMembershipDefs = allMembershipDefs.filter((def: any) => def.spaId === spaId);
+      // Get membership purchases (spa-filtered)
+      const spaMembershipDefs = await storage.getMembershipsBySpaId(spaId);
       const spaMembershipDefIds = new Set(spaMembershipDefs.map((def: any) => def.id));
       
-      const allMemberships = await storage.getAllCustomerMemberships();
-      const spaMemberships = allMemberships.filter((membership: any) => {
+      const spaMembershipsAll = await storage.getCustomerMembershipsBySpaId(spaId);
+      const spaMemberships = spaMembershipsAll.filter((membership: any) => {
         const purchaseDate = new Date(membership.purchaseDate);
         const isInDateRange = purchaseDate >= start && purchaseDate <= end;
         const isForSpa = membership.membershipId && spaMembershipDefIds.has(membership.membershipId);
@@ -5245,9 +5221,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       const membershipInvoiceIds = new Set(spaMemberships.map((m: any) => m.invoiceId).filter(Boolean));
       
-      // Get all invoices for this spa (booking-linked, product sales, membership purchases)
-      const allInvoices = await storage.getAllInvoices();
-      const spaInvoices = allInvoices.filter((inv: any) => {
+      // Get invoices (spa-filtered)
+      const spaInvoicesAll = await storage.getInvoicesBySpaId(spaId);
+      const spaInvoices = spaInvoicesAll.filter((inv: any) => {
         const invDate = new Date(inv.issueDate);
         const isInDateRange = invDate >= start && invDate <= end;
         const isForSpa = 
@@ -5257,9 +5233,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return isInDateRange && isForSpa;
       });
       
-      // Get all customers for lookup
-      const allCustomers = await storage.getAllCustomers();
-      const customerMap = new Map(allCustomers.map((c: any) => [c.id, c]));
+      // Get customers (spa-filtered)
+      const spaCustomers = await storage.getCustomersBySpaId(spaId);
+      const customerMap = new Map(spaCustomers.map((c: any) => [c.id, c]));
       
       // Get spa info
       const spa = await storage.getSpaById(spaId);
@@ -5289,9 +5265,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // Appointments Summary Report
-  app.get("/api/admin/reports/appointments-summary", isAuthenticated, isAdmin, injectAdminSpa, async (req, res) => {
+  app.get("/api/admin/reports/appointments-summary", isAuthenticated, isAdmin, injectAdminSpa, async (req: any, res) => {
     try {
-      const spaId = (req as any).adminSpaId;
+      const spaId = req.adminSpa.id;
       const { startDate, endDate } = req.query;
       
       if (!startDate || !endDate) {
@@ -5301,11 +5277,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const start = new Date(startDate as string);
       const end = new Date(endDate as string);
       
-      // Get all bookings
-      const allBookings = await storage.getAllBookings();
-      const bookings = allBookings.filter((booking: any) => {
+      // Get bookings (spa-filtered)
+      const spaBookingsAll = await storage.getBookingsBySpaId(spaId);
+      const bookings = spaBookingsAll.filter((booking: any) => {
         const bookingDate = new Date(booking.bookingDate);
-        return bookingDate >= start && bookingDate <= end && booking.spaId === spaId;
+        return bookingDate >= start && bookingDate <= end;
       });
       
       // Get spa info
