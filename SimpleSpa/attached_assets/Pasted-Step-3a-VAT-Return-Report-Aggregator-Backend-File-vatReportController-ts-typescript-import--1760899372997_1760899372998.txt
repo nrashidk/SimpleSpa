@@ -1,0 +1,201 @@
+Step 3a: VAT Return Report Aggregator (Backend)
+File: vatReportController.ts
+
+typescript
+import { db } from './db'; // Import your DB/ORM
+
+export async function getVatReturnReport(dateFrom: string, dateTo: string) {
+  const [services, products, loyalty] = await Promise.all([
+    db.bookings.aggregate({
+      where: { date: { gte: dateFrom, lte: dateTo } },
+      _sum: { netAmount: true, vatAmount: true, total: true }
+    }),
+    db.productsales.aggregate({
+      where: { saleDate: { gte: dateFrom, lte: dateTo } },
+      _sum: { netAmount: true, vatAmount: true, totalPrice: true }
+    }),
+    db.loyaltycards.aggregate({
+      where: { purchaseDate: { gte: dateFrom, lte: dateTo } },
+      _sum: { netAmount: true, vatAmount: true, purchasePrice: true }
+    }),
+  ]);
+  return {
+    period: { from: dateFrom, to: dateTo },
+    totals: {
+      services: services._sum,
+      products: products._sum,
+      loyalty: loyalty._sum,
+      fullVAT: (services._sum.vatAmount || 0) + (products._sum.vatAmount || 0) + (loyalty._sum.vatAmount || 0),
+    }
+  };
+}
+API Route Example (Express):
+
+typescript
+app.get('/api/admin/vat-report', async (req, res) => {
+  const { from, to } = req.query;
+  const report = await getVatReturnReport(from, to);
+  res.json(report);
+});
+Step 3b: Audit/Amendment Logs (Backend + Admin View)
+Backend Amendment Log Fetcher
+
+typescript
+export async function getAmendmentLogs({ type, from, to }) {
+  return await db.amendments.findMany({
+    where: {
+      changeType: type ? type : undefined,
+      amendDate: { gte: from, lte: to }
+    },
+    orderBy: { amendDate: 'desc' }
+  });
+}
+API Endpoint Example
+
+typescript
+app.get('/api/admin/amendments', async (req, res) => {
+  const { type, from, to } = req.query;
+  const logs = await getAmendmentLogs({ type, from, to });
+  res.json(logs);
+});
+Admin UI Table Sample (React):
+
+tsx
+import { useEffect, useState } from 'react';
+import axios from 'axios';
+
+function AmendmentsList({ type, dateFrom, dateTo }) {
+  const [logs, setLogs] = useState([]);
+  useEffect(() => {
+    axios.get('/api/admin/amendments', { params: { type, from: dateFrom, to: dateTo } })
+      .then(res => setLogs(res.data));
+  }, [type, dateFrom, dateTo]);
+  return (
+    <table>
+      <thead>
+        <tr>
+          <th>Date</th><th>User</th><th>Type</th><th>Record</th><th>Before</th><th>After</th>
+        </tr>
+      </thead>
+      <tbody>
+        {logs.map(log => (
+          <tr key={log.id}>
+            <td>{log.amendDate}</td>
+            <td>{log.amendedBy}</td>
+            <td>{log.changeType}</td>
+            <td>{log.recordId}</td>
+            <td>{JSON.stringify(log.previous)}</td>
+            <td>{JSON.stringify(log.current)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+Step 3c: FAF File Export (with Error Notification)
+Backend (Node/Express):
+
+typescript
+import { generateFAFExport } from './generateFAFExport';
+
+app.post('/api/admin/export-faf', async (req, res) => {
+  try {
+    const filePath = await generateFAFExport(/* params if any */);
+    res.json({ fileUrl: `/downloads/${filePath}` });
+  } catch (e) {
+    // Log error for audit
+    await db.errorlogs.create({ data: { type: 'FAF_EXPORT', details: e.message, created: new Date() }});
+    res.status(500).json({ error: 'FAF file export failed: ' + e.message });
+  }
+});
+Frontend Button:
+
+tsx
+import { useState } from 'react';
+import axios from 'axios';
+
+function FAFExportButton() {
+  const [loading, setLoading] = useState(false);
+  const [fileUrl, setFileUrl] = useState('');
+  const [error, setError] = useState('');
+
+  const handleExport = async () => {
+    setLoading(true); setError('');
+    try {
+      const res = await axios.post('/api/admin/export-faf');
+      setFileUrl(res.data.fileUrl);
+    } catch (e) {
+      setError(e.response?.data?.error || 'Export error');
+    }
+    setLoading(false);
+  };
+
+  return (
+    <div>
+      <button onClick={handleExport} disabled={loading}>
+        {loading ? 'Exporting...' : 'Export FAF'}
+      </button>
+      {fileUrl && <a href={fileUrl} download>Download FAF</a>}
+      {error && <div style={{color: 'red'}}>{error}</div>}
+    </div>
+  );
+}
+Step 3d: Backup & Restore Logs UI
+(Assume CLI/infra scripting for actual backup/restore; show just logging & admin listing.)
+
+Backend: Backup Log Table
+
+sql
+CREATE TABLE backuplogs (
+  id SERIAL PRIMARY KEY,
+  backupTime TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  fileName VARCHAR(255),
+  checksum VARCHAR(128),
+  status VARCHAR(50),
+  notes TEXT
+);
+Express Route:
+
+typescript
+app.get('/api/admin/backuplogs', async (req, res) => {
+  const logs = await db.backuplogs.findMany({ orderBy: { backupTime: 'desc' } });
+  res.json(logs);
+});
+Admin UI Example:
+
+tsx
+import { useEffect, useState } from 'react';
+import axios from 'axios';
+
+function BackupLogs() {
+  const [logs, setLogs] = useState([]);
+  useEffect(() => {
+    axios.get('/api/admin/backuplogs').then(res => setLogs(res.data));
+  }, []);
+  return (
+    <table>
+      <thead>
+        <tr><th>Time</th><th>File</th><th>Status</th><th>Checksum</th><th>Notes</th></tr>
+      </thead>
+      <tbody>
+        {logs.map(log => (
+          <tr key={log.id}>
+            <td>{log.backupTime}</td>
+            <td>{log.fileName}</td>
+            <td>{log.status}</td>
+            <td>{log.checksum}</td>
+            <td>{log.notes}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+Step 3e: General Audit UI (Search, View, Download Logs)
+You can generalize the pattern from amendments/backup to any log type:
+
+Add query params (type, dates, user, etc.)
+
+Add download/export button for logs in admin UI
+
+Secure endpoints with admin middleware/access token

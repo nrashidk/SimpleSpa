@@ -1,0 +1,84 @@
+You are provided with:
+
+A completed audit report (security, privacy, architecture, and product review)
+
+The current website codebase
+
+Your task is to review the report against the actual code and ensure that all recommendations are correct, compatible, and upgrade the system without breaking functionality.
+
+Objectives
+
+1. Validate Audit Accuracy
+
+Compare each recommendation in the report with the actual implementation.
+
+Flag any findings that are outdated, inaccurate, or not applicable to the codebase.
+
+Identify any missed issues that should logically be addressed based on the report’s intent.
+
+2. Apply Safe & Complementary Fixes
+
+Implement fixes and improvements that:
+
+Directly address verified issues
+
+Preserve existing behavior and APIs
+
+Avoid regressions or breaking changes
+
+Prefer minimal, targeted changes over broad refactors unless explicitly required.
+
+3. Security & Data Handling Upgrades
+
+Harden authentication, authorization, secrets handling, input validation, and data storage.
+
+Ensure privacy-safe data flows and compliance with modern best practices.
+
+Remove insecure patterns and replace them with production-ready alternatives.
+
+4. Architecture & Code Quality Improvements
+
+Refactor only where it improves:
+
+Modularity
+
+Readability
+
+Maintainability
+
+Scalability
+
+Align structure with the report’s recommendations without over-engineering.
+
+5. Feature & Functionality Completion
+
+Identify incomplete or fragile logic noted in the report.
+
+Ensure all core product flows are:
+
+Fully implemented
+
+Stable
+
+Consistent with the intended product behavior
+
+Constraints
+
+Maintain full existing functionality unless explicitly unsafe.
+
+Do not remove features unless the report clearly justifies it.
+
+Avoid speculative changes or redesigns not grounded in the report.
+
+Prefer clarity, stability, and correctness over novelty.
+
+Output Expectations
+
+Apply code changes directly where appropriate.
+
+Add inline comments explaining why a change was made when it relates to the audit.
+
+If a recommendation should not be implemented, clearly document why.
+
+Goal:
+Deliver a secure, stable, production-ready upgrade where audit recommendations and code are fully aligned.

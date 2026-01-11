@@ -1,0 +1,58 @@
+# Security Remediation & Code Enhancement Task
+
+Review the comprehensive security analysis report in our conversation history and systematically fix all identified issues in the SimpleSpa codebase.
+
+## Priority Order
+
+### PHASE 1: Critical Security Fixes (DO FIRST)
+1. **Remove/Restrict Dev Endpoints** (server/routes.ts:361-446)
+   - Add NODE_ENV checks to /api/dev/* endpoints
+   - Return 404 in production mode
+
+2. **Configure Helmet Security Headers** (server/index.ts)
+   - Import and configure helmet middleware
+   - Set strict CSP, HSTS, X-Frame-Options, etc.
+
+3. **Implement Rate Limiting** (server/index.ts + routes.ts)
+   - Configure global rate limiter (100 req/15min)
+   - Add strict auth limiter (5 attempts/15min) to login/register endpoints
+
+4. **Add CSRF Protection**
+   - Add SameSite: 'strict' to session cookie config (server/replitAuth.ts:40-44)
+
+5. **Webhook Signature Verification** (server/routes.ts:5444-5481)
+   - Implement Twilio webhook signature validation
+   - Implement MSG91 signature validation
+
+6. **Fix Environment Configuration**
+   - Add ENCRYPTION_KEY to .env.example with generation instructions
+   - Expand server/validateEnv.ts to validate all required variables
+
+### PHASE 2: Input Validation & Error Handling
+7. Create validateBody middleware using Zod schemas
+8. Standardize error handling across all routes
+9. Sanitize error messages to prevent information leakage
+
+### PHASE 3: Architecture Improvements
+10. Refactor routes.ts into modular structure (auth, admin, booking, etc.)
+11. Add database indexes for performance (bookings, invoices, transactions)
+12. Add database connection health check on startup
+
+## Requirements
+- Test each fix after implementation
+- Commit changes incrementally with clear messages
+- Document breaking changes
+- Ensure no functionality is broken
+- Follow existing code style and patterns
+
+## Validation Checklist
+Before marking complete, verify:
+- [ ] All dev endpoints are protected
+- [ ] Security headers return in HTTP responses
+- [ ] Rate limiting blocks excessive requests
+- [ ] Webhooks reject invalid signatures
+- [ ] All environment variables validate on startup
+- [ ] Application starts successfully
+- [ ] No regression in existing features
+
+Create your proposed implementation plan and let me decide how to proceed

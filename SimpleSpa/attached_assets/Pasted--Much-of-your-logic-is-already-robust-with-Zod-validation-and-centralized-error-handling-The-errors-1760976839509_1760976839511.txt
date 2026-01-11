@@ -1,0 +1,126 @@
+ Much of your logic is already robust with Zod validation and centralized error handling. The errors are almost certainly coming from storage-layer issues, database constraints, or data integrity failures when calling storage.createServiceCategory, storage.createService, storage.createStaff.
+
+Here’s how you should review and fix these for guaranteed error-free operation:
+
+1. DRIZZLE ORM: Make Database Operations Robust
+Common Issues:
+
+Missing or null DB connection
+
+Unique constraint violations
+
+Foreign key constraint failures (e.g., spaId or categoryId points to a non-existent record)
+
+Required columns missing (e.g., name, price)
+
+Type mismatches (price as string/number, active as boolean)
+
+How to Fix:
+Always wrap DB calls in try/catch and check for DB errors. For Drizzle ORM:
+
+ts
+// In storage.js/ts (example)
+export async function createServiceCategory(data) {
+  try {
+    // Use Drizzle ORM insert and validate existence of spaId
+    // Example assuming Postgres and Drizzle ORM:
+    // Validate spa exists
+    const spa = await db.select().from(spaTable).where(eq(spaTable.id, data.spaId));
+    if (!spa.length) throw new Error("Spa does not exist");
+    // Insert category
+    const [category] = await db
+      .insert(serviceCategoryTable)
+      .values(data)
+      .returning();
+    return category;
+  } catch (err) {
+    throw err;
+  }
+}
+Repeat similar patterns for createService and createStaff, always validating all referenced IDs and types before attempting inserts.
+
+2. Check Insert Schemas
+If Drizzle ORM has stricter requirements, make sure all required columns (not null, correct type, enum values, etc.) are present and correct.
+Review your schema definitions to ensure Zod and DB alignment.
+
+If you have required columns at DB level, make sure Zod schema reflects those and your frontend sends all expected data.
+
+Validate referenced IDs (spaId, categoryId) exist in the parent table.
+
+3. More Helpful Error Reporting
+Update the error handler to log and surface Drizzle/DB errors:
+
+ts
+function handleRouteError(res, error, message) {
+  if (error.name === "ZodError") {
+    return res.status(400).json({
+      message: "Validation error",
+      errors: error.errors
+    });
+  }
+  // Drizzle ORM/DB error handling!
+  if (error.code === '23505') { // Unique violation (Postgres)
+    return res.status(409).json({ message: "Conflict – Duplicate entry" });
+  }
+  if (error.code === '23503') { // FK violation (Postgres)
+    return res.status(400).json({ message: "Foreign key constraint failed" });
+  }
+  // Use error.message if available
+  const errMsg = error?.message || message;
+  console.error('DB/Route Error:', error);
+  res.status(500).json({ message: errMsg });
+}
+4. Test With Known-Good Data
+Before deploying:
+
+Insert a valid spa, category, staff manually via SQL
+
+Use API to add new category/service/staff referencing valid IDs only
+
+5. Schema and Sample Storage Fix (example for Drizzle)
+ts
+// Create serviceCategory with strict checks
+export async function createServiceCategory(data) {
+  if (!data.name || typeof data.name !== "string" || !data.spaId) {
+    throw new Error("Missing required fields");
+  }
+  // Validate spaId exists
+  const spa = await db.select().from(spaTable).where(eq(spaTable.id, data.spaId));
+  if (!spa.length) throw new Error("Spa does not exist");
+  const result = await db.insert(serviceCategoryTable).values(data).returning();
+  return result[0];
+}
+Repeat for createService (checking categoryId, spaId, etc.) and createStaff (checking spaId exists, email is unique if required, etc.).
+
+Final Checklist
+ Validate referenced IDs (spaId, categoryId) exist.
+
+ Do not allow inserts with missing required fields.
+
+ Improve error handling for DB constraints.
+
+ Audit logging should be in a separate try/catch, but do not let audit logging failures kill CRUD route.
+
+ Test in dev with different valid/invalid data.
+
+Ready-to-use Error Handler (Paste this):
+ts
+function handleRouteError(res, error, message) {
+  if (error.name === "ZodError") {
+    return res.status(400).json({
+      message: "Validation error",
+      errors: error.errors
+    });
+  }
+  // Postgres errors (Drizzle ORM)
+  if (error.code === '23505') {
+    return res.status(409).json({ message: "Duplicate entry" });
+  }
+  if (error.code === '23503') {
+    return res.status(400).json({ message: "Foreign key constraint failed" });
+  }
+  console.error(message, error);
+  res.status(500).json({ message: error.message || message });
+}
+Summary:
+Update your storage CRUD functions to validate referenced IDs and catch DB errors, and paste the error handler above for more helpful responses. This will eliminate the 500 errors and provide informative feedback both for your frontend and debugging.

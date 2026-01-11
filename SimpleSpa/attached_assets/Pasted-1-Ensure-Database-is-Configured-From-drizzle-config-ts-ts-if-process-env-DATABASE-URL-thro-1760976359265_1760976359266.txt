@@ -1,0 +1,66 @@
+1. Ensure Database is Configured
+From drizzle.config.ts:
+
+ts
+if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL, ensure the database is provisioned");
+export default defineConfig({
+  out: "./migrations",
+  schema: "./shared/schema.ts",
+  dialect: "postgresql",
+  dbCredentials: { url: process.env.DATABASE_URL },
+});
+Action:
+Double-check your environment variables. You must have DATABASE_URL set before starting your server, and that the database is accessible and correctly initialized with all migrations applied.
+
+2. Add Zod-based Validation to Endpoints
+You have drizzle-zod (schema validation) installed. Make sure every POST route validates its body, for example:
+
+ts
+import { z } from "zod";
+
+// Example for a category
+const categorySchema = z.object({
+  name: z.string().min(1),
+});
+
+app.post("/api/categories", async (req, res) => {
+  const parse = categorySchema.safeParse(req.body);
+  if (!parse.success) {
+    return res.status(400).json({ error: "Invalid input", details: parse.error });
+  }
+  try {
+    // ...insert db logic
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to add category" });
+  }
+});
+3. Express Route Error Handling
+Ensure you catch all errors and send appropriate messages instead of letting the server crash:
+
+ts
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).json({ message: "Internal server error" });
+});
+Always return safe error messages (never leak stack traces) and log them for debugging.
+
+4. Verify Required Fields in the DB
+The staff endpoint shows "Failed to create staff member". Confirm your database has all required columns and your insert operation matches the schema (e.g., no missing email, role, etc.).
+
+5. Upgrade and Sync Migrations
+After fixing schema and logic, make sure all database migrations are up to date:
+
+bash
+npx drizzle-kit push
+Or whatever command ensures your DB is current per your Drizzle/ORM docs.
+
+Summary Table of Changes
+Function	Required Fix	Example
+Category Add	Zod schema + catch errors	see above
+Staff Add	Zod schema + catch errors	see above
+Service Add	Zod schema + catch errors	see above
+General	Database URL + migrations	set env, run migrate
+General	Central error handler	app.use(...) middleware
+Final Note
+After fixing and validating all the above, you should be able to use all three functions without "500" errors, provided your DB is running, migrations are applied, and you have proper request body validation and error handling in your Express routes.
