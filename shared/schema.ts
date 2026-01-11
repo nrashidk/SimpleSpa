@@ -1046,6 +1046,22 @@ export const auditLogs = pgTable("audit_logs", {
   index("idx_audit_created").on(table.createdAt),
 ]);
 
+// OTP codes for phone authentication (persisted to database for scalability)
+export const otpCodes = pgTable("otp_codes", {
+  id: serial("id").primaryKey(),
+  phone: varchar("phone", { length: 20 }).notNull(),
+  otp: varchar("otp", { length: 6 }).notNull(),
+  expiresAt: timestamp("expires_at").notNull(),
+  attempts: integer("attempts").default(0).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex("idx_otp_phone").on(table.phone),
+  index("idx_otp_expires").on(table.expiresAt),
+]);
+
+export type OtpCode = typeof otpCodes.$inferSelect;
+export type InsertOtpCode = typeof otpCodes.$inferInsert;
+
 // Third-party OAuth integrations (HubSpot, Mailchimp, etc.)
 export const integrationTypes = [
   "google_my_business", 

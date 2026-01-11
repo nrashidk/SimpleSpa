@@ -2,6 +2,7 @@ import express, { type Express } from "express";
 import { createServer, type Server } from "http";
 import crypto from "crypto";
 import { z } from "zod";
+import { LRUCache } from "lru-cache";
 import twilio from "twilio";
 import { storage } from "./storage";
 import { db } from "./db";
@@ -33,6 +34,7 @@ import path from "path";
 import fs from "fs";
 import bcrypt from "bcryptjs";
 import { logger, securityLogger, redactEmail } from "./logger";
+import { isCommonPassword } from "./commonPasswords";
 import {
   insertSpaSettingsSchema,
   insertServiceCategorySchema,
@@ -59,18 +61,11 @@ import {
 } from "@shared/schema";
 
 // OAuth State HMAC signing for CSRF protection with single-use nonce
-// Used nonces are stored in memory with their expiration time to prevent replay attacks
-const usedOAuthNonces = new Map<string, number>();
-
-// Clean up expired nonces every 5 minutes
-setInterval(() => {
-  const now = Date.now();
-  for (const [nonce, expiry] of usedOAuthNonces.entries()) {
-    if (now > expiry) {
-      usedOAuthNonces.delete(nonce);
-    }
-  }
-}, 5 * 60 * 1000);
+// LRU cache with automatic expiration to prevent memory leaks under high traffic
+const usedOAuthNonces = new LRUCache<string, boolean>({
+  max: 10000, // Maximum 10k nonces
+  ttl: 10 * 60 * 1000, // 10 minute TTL (auto-cleanup)
+});
 
 function signOAuthState(data: object): string {
   const secret = process.env.SESSION_SECRET || 'fallback-secret';
@@ -109,9 +104,9 @@ function verifyOAuthState(state: string): { valid: boolean; data?: any; alreadyU
   }
 }
 
-function markOAuthStateAsUsed(nonce: string, expiryMs: number = 10 * 60 * 1000): void {
-  // Store nonce with expiration timestamp (10 minutes by default)
-  usedOAuthNonces.set(nonce, Date.now() + expiryMs);
+function markOAuthStateAsUsed(nonce: string): void {
+  // Store nonce in LRU cache (TTL handled automatically)
+  usedOAuthNonces.set(nonce, true);
 }
 
 // Dummy password hash for constant-time comparison (prevents email enumeration)
@@ -247,9 +242,8 @@ function validatePassword(password: string): { valid: boolean; message?: string 
   if (!/[^A-Za-z0-9]/.test(password)) {
     return { valid: false, message: "Password must contain at least one special character" };
   }
-  // Check for common passwords
-  const commonPasswords = ['password123', 'password1234', 'admin123456', 'qwerty123456'];
-  if (commonPasswords.includes(password.toLowerCase())) {
+  // Check for common passwords using comprehensive list
+  if (isCommonPassword(password)) {
     return { valid: false, message: "Password is too common. Please choose a stronger password." };
   }
   return { valid: true };

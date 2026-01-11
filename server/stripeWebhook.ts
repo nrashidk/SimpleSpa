@@ -12,13 +12,13 @@ export async function handleStripeWebhook(payload: Buffer, signature: string): P
     
     const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
     
-    let event;
-    if (webhookSecret) {
-      event = stripe.webhooks.constructEvent(payload, signature, webhookSecret);
-    } else {
-      logger.warn('[Stripe Webhook] No webhook secret configured, parsing payload directly');
-      event = JSON.parse(payload.toString());
+    // SECURITY: Require webhook secret to prevent payment fraud via forged webhooks
+    if (!webhookSecret) {
+      logger.error('[Stripe Webhook] STRIPE_WEBHOOK_SECRET is required for secure payment processing');
+      throw new Error('STRIPE_WEBHOOK_SECRET is required - webhook signature verification cannot be skipped');
     }
+    
+    const event = stripe.webhooks.constructEvent(payload, signature, webhookSecret);
 
     logger.info('[Stripe Webhook] Received event', { eventType: event.type });
 

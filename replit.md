@@ -32,6 +32,16 @@ Security hardening (Updated 2026-01-11):
 - **Information Disclosure Prevention:** Login endpoint returns single "Invalid credentials" message for all failure types (wrong password, non-admin, unapproved, locked) to prevent email enumeration
 - **Account Lockout:** Users table has failedLoginAttempts and lockedUntil columns; accounts lock for 15 minutes after 5 failed attempts; counter resets on successful login
 - **Audit Log Integrity:** HMAC-SHA256 signatures with hash chain linking each entry to previous for tamper detection
+- **Stripe Webhook Security:** STRIPE_WEBHOOK_SECRET is now required - webhook signature verification cannot be bypassed
+- **OTP Database Storage:** Phone OTP codes stored in PostgreSQL otp_codes table (not in-memory) for horizontal scaling and persistence across restarts
+- **Session Cookie Security:** SameSite='lax' enforced to prevent CSRF from third-party sites
+- **Performance Indexes:** Added indexes for bookings(date,status), customers(spa_id,email), staff(spa_id,active), invoices(spa_id,status,issue_date)
+- **OAuth Nonce LRU Cache:** Bounded LRU cache (max 10k, 10min TTL) prevents memory leaks under high traffic
+- **Common Password List:** Comprehensive list (150+ entries) for password strength validation
+
+Architecture improvements (Started 2026-01-11):
+- **Modular Routes Pattern:** Created server/routes/ directory structure for incremental route modularization
+- **Example Migration:** server/routes/admin/services.routes.ts demonstrates the pattern for extracting routes from monolithic routes.ts
 
 The system provides an audit trail for significant changes with cryptographic integrity verification. Uses Winston-based structured logging with PII redaction. Performance optimizations are applied to admin list endpoints and booking enrichment.
 

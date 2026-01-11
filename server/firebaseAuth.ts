@@ -7,6 +7,9 @@ import { AuditLogger } from "./auditLog";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { otpRequestLimiter, otpVerifyLimiter } from "./index";
+import { db } from "./db";
+import { otpCodes } from "@shared/schema";
+import { eq, lt } from "drizzle-orm";
 
 let firebaseInitialized = false;
 
@@ -46,7 +49,7 @@ export function getSession() {
       httpOnly: true,
       secure: isProduction,
       maxAge: sessionTtl,
-      sameSite: isProduction ? 'none' : 'lax',
+      sameSite: 'lax', // Always use 'lax' - CSRF tokens handle cross-origin protection
     },
   });
 }
@@ -327,8 +330,14 @@ export async function setupAuth(app: Express) {
     }
   });
 
-  // OTP storage (in-memory for simplicity - in production use Redis or database)
-  const otpStore = new Map<string, { otp: string; expiresAt: number; attempts: number }>();
+  // OTP cleanup - delete expired codes every 5 minutes
+  setInterval(async () => {
+    try {
+      await db.delete(otpCodes).where(lt(otpCodes.expiresAt, new Date()));
+    } catch (error) {
+      console.error("OTP cleanup error:", error);
+    }
+  }, 5 * 60 * 1000);
 
   // Customer phone OTP request - Rate limited to prevent SMS flooding
   app.post("/api/auth/customer/phone/request-otp", otpRequestLimiter, async (req, res) => {
@@ -348,13 +357,18 @@ export async function setupAuth(app: Express) {
 
       // Generate 6-digit OTP
       const otp = Math.floor(100000 + Math.random() * 900000).toString();
-      const expiresAt = Date.now() + (10 * 60 * 1000); // 10 minutes
+      const expiresAt = new Date(Date.now() + (10 * 60 * 1000)); // 10 minutes
 
-      // Store OTP
-      otpStore.set(normalizedPhone, { otp, expiresAt, attempts: 0 });
+      // Store OTP in database (upsert pattern - replace existing if present)
+      await db.delete(otpCodes).where(eq(otpCodes.phone, normalizedPhone));
+      await db.insert(otpCodes).values({
+        phone: normalizedPhone,
+        otp,
+        expiresAt,
+        attempts: 0,
+      });
 
-      // TODO: Send OTP via SMS using Twilio (if configured)
-      // For now, log it in development
+      // Log in development for testing
       if (process.env.NODE_ENV === 'development') {
         console.log(`[DEV] OTP for ${normalizedPhone}: ${otp}`);
       }
@@ -406,29 +420,40 @@ export async function setupAuth(app: Express) {
       }
 
       const normalizedPhone = phoneValidation.normalized!;
-      const storedOtp = otpStore.get(normalizedPhone);
+      
+      // Fetch OTP from database
+      const [storedOtp] = await db.select()
+        .from(otpCodes)
+        .where(eq(otpCodes.phone, normalizedPhone))
+        .limit(1);
 
       if (!storedOtp) {
         return res.status(400).json({ message: "No verification code found. Please request a new one." });
       }
 
-      if (Date.now() > storedOtp.expiresAt) {
-        otpStore.delete(normalizedPhone);
+      if (new Date() > storedOtp.expiresAt) {
+        await db.delete(otpCodes).where(eq(otpCodes.phone, normalizedPhone));
         return res.status(400).json({ message: "Verification code expired. Please request a new one." });
       }
 
-      storedOtp.attempts++;
-      if (storedOtp.attempts > 5) {
-        otpStore.delete(normalizedPhone);
+      // Increment attempts
+      const newAttempts = storedOtp.attempts + 1;
+      if (newAttempts > 5) {
+        await db.delete(otpCodes).where(eq(otpCodes.phone, normalizedPhone));
         return res.status(429).json({ message: "Too many attempts. Please request a new code." });
       }
+      
+      // Update attempts count in database
+      await db.update(otpCodes)
+        .set({ attempts: newAttempts })
+        .where(eq(otpCodes.phone, normalizedPhone));
 
       if (storedOtp.otp !== otp) {
         return res.status(400).json({ message: "Invalid verification code" });
       }
 
-      // OTP verified, delete from store
-      otpStore.delete(normalizedPhone);
+      // OTP verified, delete from database
+      await db.delete(otpCodes).where(eq(otpCodes.phone, normalizedPhone));
 
       // Find or create user by phone
       let user = await storage.getUserByPhone(normalizedPhone);
