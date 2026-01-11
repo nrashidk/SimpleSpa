@@ -103,7 +103,7 @@ import {
   type InsertBackupLog,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, and, gte, lte, sql } from "drizzle-orm";
+import { eq, desc, and, or, gte, lte, sql } from "drizzle-orm";
 import { withTransaction } from "./transaction";
 
 // Interface for storage operations
@@ -2335,6 +2335,26 @@ export class DatabaseStorage implements IStorage {
       .select()
       .from(spaNotificationCredentials)
       .where(eq(spaNotificationCredentials.fromPhone, normalizedPhone));
+    return credential;
+  }
+
+  async getWhatsAppCredentialsByPhone(phoneNumber: string): Promise<any | undefined> {
+    const normalizedPhone = phoneNumber.replace(/^whatsapp:/, '').replace(/^\+/, '');
+    const withPlus = '+' + normalizedPhone;
+    
+    const [credential] = await db
+      .select()
+      .from(spaNotificationCredentials)
+      .where(
+        and(
+          or(
+            eq(spaNotificationCredentials.fromPhone, normalizedPhone),
+            eq(spaNotificationCredentials.fromPhone, withPlus)
+          ),
+          eq(spaNotificationCredentials.channel, 'whatsapp'),
+          eq(spaNotificationCredentials.status, 'active')
+        )
+      );
     return credential;
   }
 

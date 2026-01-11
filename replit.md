@@ -55,6 +55,14 @@ A team management system features an advanced timesheet system with breaks, over
 
 A conversational WhatsApp booking system provides an 8-step state machine for customer bookings using interactive messages. It integrates with Stripe for online payments and sends automated lifecycle notifications (confirmation, reminders, reviews, cancellations, reschedules). A non-blocking, idle-gated review collection system is also implemented. A node-cron scheduler handles reminders and review requests. Session management ensures fresh context for each booking.
 
+WhatsApp Multi-Tenant Isolation (Completed 2026-01-11):
+- **Per-Request Credentials:** No shared state - Twilio credentials passed as parameters to all handler methods
+- **RequestContext Pattern:** Each request creates its own context with required spaId (non-nullable)
+- **Conversation Partitioning:** All conversations keyed by (phoneNumber, spaId) - no cross-spa fallback
+- **Webhook Fail-Early:** Webhook handler rejects messages if credentials missing or decryption fails
+- **Customer/Booking Isolation:** All review flows filter customers and bookings by spaId
+- **Server-Initiated Flows:** startReviewFlow, sendIdleGatedReviewPrompt require valid spa credentials
+
 ## External Dependencies
 -   **Firebase Authentication:** User authentication via Google Sign-in.
 -   **PostgreSQL (Neon-backed):** Primary database.

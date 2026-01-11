@@ -6066,6 +6066,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // Twilio WhatsApp inbound message webhook (with signature verification)
+  // Multi-tenant: Routes messages to correct spa based on destination WhatsApp number
   app.post("/api/webhooks/whatsapp/inbound", async (req, res) => {
     try {
       // Verify Twilio signature
@@ -6077,13 +6078,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const { MessageSid, From, To, Body, ButtonPayload, ListId, ListTitle } = req.body;
       
-      logger.debug('WhatsApp inbound message', { from: From, hasBody: !!Body });
+      logger.debug('WhatsApp inbound message', { from: From, to: To, hasBody: !!Body });
+      
+      // Multi-tenant: Look up spa credentials by the destination WhatsApp number
+      const toNumber = To?.replace('whatsapp:', '') || '';
+      const credential = await storage.getWhatsAppCredentialsByPhone(toNumber);
       
       // Import and use the WhatsApp booking service
       const { whatsappBookingService } = await import('./whatsappBookingService');
       
-      // Handle the inbound message
-      const response = await whatsappBookingService.handleInboundMessage({
+      if (!credential || !credential.encryptedCredentials) {
+        logger.warn('WhatsApp message rejected: no credentials found for number', { toNumber });
+        return res.status(200).send(''); // 200 to Twilio but don't process (avoid retries)
+      }
+      
+      let credentials: { accountSid: string; authToken: string; fromNumber: string; spaId: number; spaName?: string };
+      
+      try {
+        const decrypted = decryptJSON<{ accountSid: string; authToken: string }>(credential.encryptedCredentials);
+        const spa = await storage.getSpa(credential.spaId);
+        
+        credentials = {
+          accountSid: decrypted.accountSid,
+          authToken: decrypted.authToken,
+          fromNumber: credential.fromPhone,
+          spaId: credential.spaId,
+          spaName: spa?.name,
+        };
+        
+        logger.debug('WhatsApp multi-tenant: routing to spa', { spaId: credential.spaId, spaName: spa?.name });
+      } catch (decryptError) {
+        logger.error('WhatsApp message rejected: failed to decrypt credentials', { error: decryptError instanceof Error ? decryptError.message : 'Unknown' });
+        return res.status(200).send(''); // 200 to Twilio but don't process
+      }
+      
+      // Handle the inbound message with credentials (thread-safe, no shared state)
+      await whatsappBookingService.handleInboundMessage({
         MessageSid,
         From,
         To,
@@ -6091,7 +6121,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ButtonPayload,
         ListId,
         ListTitle,
-      });
+      }, credentials);
       
       // Twilio expects TwiML response or empty 200
       res.status(200).send('');

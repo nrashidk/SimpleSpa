@@ -9,12 +9,14 @@ import {
   spas,
   bookings,
   customerReviews,
+  spaNotificationCredentials,
   type WhatsappConversation,
   type WhatsappConversationState,
 } from "@shared/schema";
 import { eq, and, desc, gte, isNull, or, sql } from "drizzle-orm";
 import twilio from "twilio";
 import { createPaymentLink } from "./stripeClient";
+import { decryptJSON } from "./encryptionService";
 
 interface ConversationContext {
   spaId?: number;
@@ -44,86 +46,131 @@ interface TwilioInboundMessage {
   ListTitle?: string;
 }
 
-class WhatsAppBookingService {
-  private twilioClient: any = null;
-  private twilioFromNumber: string = '';
+interface TwilioCredentials {
+  accountSid: string;
+  authToken: string;
+  fromNumber: string;
+  spaId: number;
+  spaName?: string;
+}
 
-  async initialize(accountSid: string, authToken: string, fromNumber: string) {
-    this.twilioClient = twilio(accountSid, authToken);
-    this.twilioFromNumber = fromNumber;
+interface RequestContext {
+  twilioClient: any;
+  fromNumber: string;
+  spaId: number;
+  spaName: string | null;
+}
+
+class WhatsAppBookingService {
+  private async getContextForSpa(spaId: number): Promise<RequestContext | null> {
+    const [credential] = await db
+      .select()
+      .from(spaNotificationCredentials)
+      .where(
+        and(
+          eq(spaNotificationCredentials.spaId, spaId),
+          eq(spaNotificationCredentials.channel, 'whatsapp'),
+          eq(spaNotificationCredentials.status, 'active')
+        )
+      );
+
+    if (!credential?.encryptedCredentials) {
+      return null;
+    }
+
+    try {
+      const decrypted = decryptJSON<{ accountSid: string; authToken: string }>(credential.encryptedCredentials);
+      const [spa] = await db.select().from(spas).where(eq(spas.id, spaId));
+      
+      return {
+        twilioClient: twilio(decrypted.accountSid, decrypted.authToken),
+        fromNumber: credential.fromPhone || '',
+        spaId,
+        spaName: spa?.name || null,
+      };
+    } catch {
+      return null;
+    }
   }
 
-  async handleInboundMessage(message: TwilioInboundMessage): Promise<string> {
+  async handleInboundMessage(message: TwilioInboundMessage, credentials: TwilioCredentials): Promise<string> {
     const phoneNumber = message.From.replace('whatsapp:', '');
     const messageBody = message.Body?.trim().toLowerCase() || '';
     const buttonPayload = message.ButtonPayload;
     
-    let conversation = await this.getOrCreateConversation(phoneNumber);
+    const ctx: RequestContext = {
+      twilioClient: twilio(credentials.accountSid, credentials.authToken),
+      fromNumber: credentials.fromNumber,
+      spaId: credentials.spaId,
+      spaName: credentials.spaName || null,
+    };
+    
+    let conversation = await this.getOrCreateConversation(phoneNumber, ctx.spaId);
     
     if (messageBody === 'cancel' || messageBody === 'start over' || messageBody === 'restart') {
       conversation = await this.resetConversation(conversation.id);
-      return await this.sendWelcomeMessage(phoneNumber, conversation);
+      return await this.sendWelcomeMessage(phoneNumber, conversation, ctx);
     }
 
     const idleStates = ['welcome', 'completed', 'review_completed'];
     if ((messageBody === 'rate' || messageBody === 'review' || messageBody === 'feedback') && 
         idleStates.includes(conversation.state)) {
-      return await this.startOptInReview(phoneNumber, conversation);
+      return await this.startOptInReview(phoneNumber, conversation, ctx);
     }
 
     const input = buttonPayload || messageBody;
     
     switch (conversation.state) {
       case 'welcome':
-        return await this.handleWelcome(phoneNumber, conversation, input);
+        return await this.handleWelcome(phoneNumber, conversation, input, ctx);
       case 'select_spa':
-        return await this.handleSelectSpa(phoneNumber, conversation, input);
+        return await this.handleSelectSpa(phoneNumber, conversation, input, ctx);
       case 'select_location':
-        return await this.handleSelectLocation(phoneNumber, conversation, input);
+        return await this.handleSelectLocation(phoneNumber, conversation, input, ctx);
       case 'select_category':
-        return await this.handleSelectCategory(phoneNumber, conversation, input);
+        return await this.handleSelectCategory(phoneNumber, conversation, input, ctx);
       case 'select_service':
-        return await this.handleSelectService(phoneNumber, conversation, input);
+        return await this.handleSelectService(phoneNumber, conversation, input, ctx);
       case 'select_professional':
-        return await this.handleSelectProfessional(phoneNumber, conversation, input);
+        return await this.handleSelectProfessional(phoneNumber, conversation, input, ctx);
       case 'select_date':
-        return await this.handleSelectDate(phoneNumber, conversation, input);
+        return await this.handleSelectDate(phoneNumber, conversation, input, ctx);
       case 'select_time':
-        return await this.handleSelectTime(phoneNumber, conversation, input);
+        return await this.handleSelectTime(phoneNumber, conversation, input, ctx);
       case 'confirm_details':
-        return await this.handleConfirmDetails(phoneNumber, conversation, input);
+        return await this.handleConfirmDetails(phoneNumber, conversation, input, ctx);
       case 'payment':
-        return await this.handlePayment(phoneNumber, conversation, input);
+        return await this.handlePayment(phoneNumber, conversation, input, ctx);
       case 'completed':
         if (messageBody === 'hi' || messageBody === 'hello' || messageBody === 'book' || messageBody === 'hey') {
           conversation = await this.resetConversation(conversation.id);
-          return await this.sendWelcomeMessage(phoneNumber, conversation);
+          return await this.sendWelcomeMessage(phoneNumber, conversation, ctx);
         }
-        return await this.sendCompletedMessage(phoneNumber, conversation);
+        return await this.sendCompletedMessage(phoneNumber, conversation, ctx);
       case 'review_rating':
         if (messageBody === 'skip' || messageBody === 'book' || messageBody === 'later') {
           conversation = await this.resetConversation(conversation.id);
-          return await this.sendWelcomeMessage(phoneNumber, conversation);
+          return await this.sendWelcomeMessage(phoneNumber, conversation, ctx);
         }
-        return await this.handleReviewRating(phoneNumber, conversation, input);
+        return await this.handleReviewRating(phoneNumber, conversation, input, ctx);
       case 'review_comment':
         if (messageBody === 'skip' || messageBody === 'book' || messageBody === 'later') {
           conversation = await this.resetConversation(conversation.id);
-          return await this.sendWelcomeMessage(phoneNumber, conversation);
+          return await this.sendWelcomeMessage(phoneNumber, conversation, ctx);
         }
-        return await this.handleReviewComment(phoneNumber, conversation, input);
+        return await this.handleReviewComment(phoneNumber, conversation, input, ctx);
       case 'review_completed':
         if (messageBody === 'book' || messageBody === 'hi' || messageBody === 'hello') {
           conversation = await this.resetConversation(conversation.id);
-          return await this.sendWelcomeMessage(phoneNumber, conversation);
+          return await this.sendWelcomeMessage(phoneNumber, conversation, ctx);
         }
-        return await this.sendReviewCompletedMessage(phoneNumber, conversation);
+        return await this.sendReviewCompletedMessage(phoneNumber, conversation, ctx);
       default:
-        return await this.sendWelcomeMessage(phoneNumber, conversation);
+        return await this.sendWelcomeMessage(phoneNumber, conversation, ctx);
     }
   }
 
-  private async getOrCreateConversation(phoneNumber: string): Promise<WhatsappConversation> {
+  private async getOrCreateConversation(phoneNumber: string, spaId: number): Promise<WhatsappConversation> {
     const now = new Date();
     
     const validConversations = await db
@@ -132,6 +179,7 @@ class WhatsAppBookingService {
       .where(
         and(
           eq(whatsappConversations.phoneNumber, phoneNumber),
+          eq(whatsappConversations.spaId, spaId),
           or(
             isNull(whatsappConversations.expiresAt),
             gte(whatsappConversations.expiresAt, now)
@@ -162,6 +210,7 @@ class WhatsAppBookingService {
       .insert(whatsappConversations)
       .values({
         phoneNumber,
+        spaId,
         state: 'welcome',
         context: {},
         expiresAt,
@@ -208,18 +257,18 @@ class WhatsAppBookingService {
     });
   }
 
-  private async sendMessage(to: string, message: string): Promise<string> {
+  private async sendMessage(to: string, message: string, ctx: RequestContext): Promise<string> {
     console.log(`📱 [WhatsApp OUT] To: ${to}`);
     console.log(`   Message: ${message.substring(0, 200)}...`);
     
-    if (!this.twilioClient) {
+    if (!ctx.twilioClient) {
       console.log('   [DEV MODE - No Twilio client configured]');
       return 'dev-mode-' + Date.now();
     }
 
     try {
-      const result = await this.twilioClient.messages.create({
-        from: `whatsapp:${this.twilioFromNumber}`,
+      const result = await ctx.twilioClient.messages.create({
+        from: `whatsapp:${ctx.fromNumber}`,
         to: `whatsapp:${to}`,
         body: message,
       });
@@ -233,21 +282,22 @@ class WhatsAppBookingService {
   private async sendInteractiveButtons(
     to: string,
     body: string,
-    buttons: { id: string; title: string }[]
+    buttons: { id: string; title: string }[],
+    ctx: RequestContext
   ): Promise<string> {
     console.log(`📱 [WhatsApp OUT - Buttons] To: ${to}`);
     console.log(`   Body: ${body}`);
     console.log(`   Buttons: ${JSON.stringify(buttons)}`);
     
-    if (!this.twilioClient) {
+    if (!ctx.twilioClient) {
       console.log('   [DEV MODE - Sending as text]');
       const buttonText = buttons.map((b, i) => `${i + 1}. ${b.title}`).join('\n');
-      return await this.sendMessage(to, `${body}\n\n${buttonText}\n\nReply with a number to select.`);
+      return await this.sendMessage(to, `${body}\n\n${buttonText}\n\nReply with a number to select.`, ctx);
     }
 
     try {
-      const result = await this.twilioClient.messages.create({
-        from: `whatsapp:${this.twilioFromNumber}`,
+      const result = await ctx.twilioClient.messages.create({
+        from: `whatsapp:${ctx.fromNumber}`,
         to: `whatsapp:${to}`,
         contentSid: 'template_buttons',
         contentVariables: JSON.stringify({
@@ -258,16 +308,36 @@ class WhatsAppBookingService {
       return result.sid;
     } catch (error: any) {
       const buttonText = buttons.map((b, i) => `${i + 1}. ${b.title}`).join('\n');
-      return await this.sendMessage(to, `${body}\n\n${buttonText}\n\nReply with a number to select.`);
+      return await this.sendMessage(to, `${body}\n\n${buttonText}\n\nReply with a number to select.`, ctx);
     }
   }
 
-  private async sendWelcomeMessage(phoneNumber: string, conversation: WhatsappConversation): Promise<string> {
+  private async sendWelcomeMessage(phoneNumber: string, conversation: WhatsappConversation, ctx: RequestContext): Promise<string> {
+    if (ctx.spaId) {
+      const [spa] = await db.select().from(spas).where(eq(spas.id, ctx.spaId));
+      
+      if (spa) {
+        await this.updateConversation(conversation.id, 'select_location', {
+          spaId: spa.id,
+          spaName: spa.name,
+        });
+        
+        return await this.sendInteractiveButtons(phoneNumber,
+          `Welcome to ${spa.name}! 🌿\n\nWould you like to book an appointment at our location or request a home service?`,
+          [
+            { id: 'spa', title: '📍 At Spa' },
+            { id: 'home', title: '🏠 Home Service' },
+          ],
+          ctx
+        );
+      }
+    }
+
     const allSpas = await db.select().from(spas).where(eq(spas.active, true));
     
     if (allSpas.length === 0) {
       return await this.sendMessage(phoneNumber, 
-        "Welcome! Unfortunately, there are no spas available for booking at this time. Please try again later.");
+        "Welcome! Unfortunately, there are no spas available for booking at this time. Please try again later.", ctx);
     }
 
     if (allSpas.length === 1) {
@@ -282,7 +352,8 @@ class WhatsAppBookingService {
         [
           { id: 'spa', title: '📍 At Spa' },
           { id: 'home', title: '🏠 Home Service' },
-        ]
+        ],
+        ctx
       );
     }
 
@@ -291,22 +362,22 @@ class WhatsAppBookingService {
     
     const spaList = allSpas.map((s, i) => `${i + 1}. ${s.name}`).join('\n');
     return await this.sendMessage(phoneNumber,
-      `Welcome! 🌿\n\nPlease select a spa:\n\n${spaList}\n\nReply with the number of your choice.`
+      `Welcome! 🌿\n\nPlease select a spa:\n\n${spaList}\n\nReply with the number of your choice.`, ctx
     );
   }
 
-  private async handleWelcome(phoneNumber: string, conversation: WhatsappConversation, input: string): Promise<string> {
-    return await this.sendWelcomeMessage(phoneNumber, conversation);
+  private async handleWelcome(phoneNumber: string, conversation: WhatsappConversation, input: string, ctx: RequestContext): Promise<string> {
+    return await this.sendWelcomeMessage(phoneNumber, conversation, ctx);
   }
 
-  private async handleSelectSpa(phoneNumber: string, conversation: WhatsappConversation, input: string): Promise<string> {
+  private async handleSelectSpa(phoneNumber: string, conversation: WhatsappConversation, input: string, ctx: RequestContext): Promise<string> {
     const allSpas = await db.select().from(spas).where(eq(spas.active, true));
     const spaIndex = parseInt(input) - 1;
     
     if (isNaN(spaIndex) || spaIndex < 0 || spaIndex >= allSpas.length) {
       const spaList = allSpas.map((s, i) => `${i + 1}. ${s.name}`).join('\n');
       return await this.sendMessage(phoneNumber,
-        `Please select a valid spa number:\n\n${spaList}`
+        `Please select a valid spa number:\n\n${spaList}`, ctx
       );
     }
 
@@ -321,11 +392,12 @@ class WhatsAppBookingService {
       [
         { id: 'spa', title: '📍 At Spa' },
         { id: 'home', title: '🏠 Home Service' },
-      ]
+      ],
+      ctx
     );
   }
 
-  private async handleSelectLocation(phoneNumber: string, conversation: WhatsappConversation, input: string): Promise<string> {
+  private async handleSelectLocation(phoneNumber: string, conversation: WhatsappConversation, input: string, ctx: RequestContext): Promise<string> {
     const context = conversation.context as ConversationContext;
     let locationType: 'spa' | 'home';
     
@@ -339,7 +411,8 @@ class WhatsAppBookingService {
         [
           { id: 'spa', title: '📍 At Spa' },
           { id: 'home', title: '🏠 Home Service' },
-        ]
+        ],
+        ctx
       );
     }
 
@@ -350,7 +423,7 @@ class WhatsAppBookingService {
 
     if (categories.length === 0) {
       return await this.sendMessage(phoneNumber,
-        "Sorry, there are no service categories available at this time. Please contact the spa directly."
+        "Sorry, there are no service categories available at this time. Please contact the spa directly.", ctx
       );
     }
 
@@ -361,11 +434,11 @@ class WhatsAppBookingService {
 
     const categoryList = categories.map((c, i) => `${i + 1}. ${c.name}`).join('\n');
     return await this.sendMessage(phoneNumber,
-      `Perfect! You chose ${locationType === 'home' ? 'Home Service' : 'At Spa'}.\n\nPlease select a service category:\n\n${categoryList}\n\nReply with the number.`
+      `Perfect! You chose ${locationType === 'home' ? 'Home Service' : 'At Spa'}.\n\nPlease select a service category:\n\n${categoryList}\n\nReply with the number.`, ctx
     );
   }
 
-  private async handleSelectCategory(phoneNumber: string, conversation: WhatsappConversation, input: string): Promise<string> {
+  private async handleSelectCategory(phoneNumber: string, conversation: WhatsappConversation, input: string, ctx: RequestContext): Promise<string> {
     const context = conversation.context as ConversationContext;
     
     const categories = await db
@@ -378,7 +451,7 @@ class WhatsAppBookingService {
     if (isNaN(categoryIndex) || categoryIndex < 0 || categoryIndex >= categories.length) {
       const categoryList = categories.map((c, i) => `${i + 1}. ${c.name}`).join('\n');
       return await this.sendMessage(phoneNumber,
-        `Please select a valid category:\n\n${categoryList}`
+        `Please select a valid category:\n\n${categoryList}`, ctx
       );
     }
 
@@ -398,7 +471,7 @@ class WhatsAppBookingService {
     if (categoryServices.length === 0) {
       const categoryList = categories.map((c, i) => `${i + 1}. ${c.name}`).join('\n');
       return await this.sendMessage(phoneNumber,
-        `No services available in ${selectedCategory.name}. Please select another category:\n\n${categoryList}`
+        `No services available in ${selectedCategory.name}. Please select another category:\n\n${categoryList}`, ctx
       );
     }
 
@@ -413,11 +486,11 @@ class WhatsAppBookingService {
     ).join('\n');
     
     return await this.sendMessage(phoneNumber,
-      `Services in ${selectedCategory.name}:\n\n${serviceList}\n\nReply with a number to select a service, or "done" when finished.`
+      `Services in ${selectedCategory.name}:\n\n${serviceList}\n\nReply with a number to select a service, or "done" when finished.`, ctx
     );
   }
 
-  private async handleSelectService(phoneNumber: string, conversation: WhatsappConversation, input: string): Promise<string> {
+  private async handleSelectService(phoneNumber: string, conversation: WhatsappConversation, input: string, ctx: RequestContext): Promise<string> {
     const context = conversation.context as ConversationContext;
     
     const categoryServices = await db
@@ -434,7 +507,7 @@ class WhatsAppBookingService {
     if (input === 'done' || input === 'next' || input === 'continue') {
       if (!context.selectedServices || context.selectedServices.length === 0) {
         return await this.sendMessage(phoneNumber,
-          "Please select at least one service before continuing."
+          "Please select at least one service before continuing.", ctx
         );
       }
 
@@ -456,7 +529,7 @@ class WhatsAppBookingService {
         });
 
         return await this.sendMessage(phoneNumber,
-          `Great selection!\n\nPlease enter your preferred date (e.g., "tomorrow", "Jan 15", "2026-01-15"):`
+          `Great selection!\n\nPlease enter your preferred date (e.g., "tomorrow", "Jan 15", "2026-01-15"):`, ctx
         );
       }
 
@@ -464,7 +537,7 @@ class WhatsAppBookingService {
 
       const staffList = staffMembers.map((s, i) => `${i + 1}. ${s.name}`).join('\n');
       return await this.sendMessage(phoneNumber,
-        `Selected services:\n${context.selectedServices.map(s => `- ${s.name}`).join('\n')}\n\nTotal: AED ${context.totalAmount?.toFixed(0) || 0}\n\nSelect a professional:\n\n0. Any Available\n${staffList}\n\nReply with a number.`
+        `Selected services:\n${context.selectedServices.map(s => `- ${s.name}`).join('\n')}\n\nTotal: AED ${context.totalAmount?.toFixed(0) || 0}\n\nSelect a professional:\n\n0. Any Available\n${staffList}\n\nReply with a number.`, ctx
       );
     }
 
@@ -475,7 +548,7 @@ class WhatsAppBookingService {
         `${i + 1}. ${s.name} - AED ${Number(s.price).toFixed(0)}`
       ).join('\n');
       return await this.sendMessage(phoneNumber,
-        `Please select a valid service:\n\n${serviceList}\n\nOr reply "done" when finished.`
+        `Please select a valid service:\n\n${serviceList}\n\nOr reply "done" when finished.`, ctx
       );
     }
 
@@ -485,7 +558,7 @@ class WhatsAppBookingService {
     const alreadySelected = currentServices.some(s => s.id === selectedService.id);
     if (alreadySelected) {
       return await this.sendMessage(phoneNumber,
-        `${selectedService.name} is already selected. Reply "done" to continue or select another service.`
+        `${selectedService.name} is already selected. Reply "done" to continue or select another service.`, ctx
       );
     }
 
@@ -514,11 +587,11 @@ class WhatsAppBookingService {
     ).join('\n');
 
     return await this.sendMessage(phoneNumber,
-      `Added: ${selectedService.name}\n\nCurrent selection:\n${updatedServices.map(s => `- ${s.name}`).join('\n')}\n\nTotal: AED ${totalAmount.toFixed(0)} (${totalDuration} min)\n\n${serviceList}\n\nSelect another or reply "done" to continue.`
+      `Added: ${selectedService.name}\n\nCurrent selection:\n${updatedServices.map(s => `- ${s.name}`).join('\n')}\n\nTotal: AED ${totalAmount.toFixed(0)} (${totalDuration} min)\n\n${serviceList}\n\nSelect another or reply "done" to continue.`, ctx
     );
   }
 
-  private async handleSelectProfessional(phoneNumber: string, conversation: WhatsappConversation, input: string): Promise<string> {
+  private async handleSelectProfessional(phoneNumber: string, conversation: WhatsappConversation, input: string, ctx: RequestContext): Promise<string> {
     const context = conversation.context as ConversationContext;
     
     const staffMembers = await db
@@ -536,7 +609,7 @@ class WhatsAppBookingService {
     if (isNaN(staffIndex) || staffIndex < 0 || staffIndex > staffMembers.length) {
       const staffList = staffMembers.map((s, i) => `${i + 1}. ${s.name}`).join('\n');
       return await this.sendMessage(phoneNumber,
-        `Please select a valid option:\n\n0. Any Available\n${staffList}`
+        `Please select a valid option:\n\n0. Any Available\n${staffList}`, ctx
       );
     }
 
@@ -558,18 +631,18 @@ class WhatsAppBookingService {
     });
 
     return await this.sendMessage(phoneNumber,
-      `Selected: ${selectedStaffName}\n\nPlease enter your preferred date (e.g., "tomorrow", "Jan 15", "2026-01-15"):`
+      `Selected: ${selectedStaffName}\n\nPlease enter your preferred date (e.g., "tomorrow", "Jan 15", "2026-01-15"):`, ctx
     );
   }
 
-  private async handleSelectDate(phoneNumber: string, conversation: WhatsappConversation, input: string): Promise<string> {
+  private async handleSelectDate(phoneNumber: string, conversation: WhatsappConversation, input: string, ctx: RequestContext): Promise<string> {
     const context = conversation.context as ConversationContext;
     
     const parsedDate = this.parseDate(input);
     
     if (!parsedDate) {
       return await this.sendMessage(phoneNumber,
-        "I couldn't understand that date. Please try again (e.g., \"tomorrow\", \"Jan 15\", \"2026-01-15\"):"
+        "I couldn't understand that date. Please try again (e.g., \"tomorrow\", \"Jan 15\", \"2026-01-15\"):", ctx
       );
     }
 
@@ -578,7 +651,7 @@ class WhatsAppBookingService {
     
     if (parsedDate < today) {
       return await this.sendMessage(phoneNumber,
-        "Please select a date in the future:"
+        "Please select a date in the future:", ctx
       );
     }
 
@@ -593,11 +666,11 @@ class WhatsAppBookingService {
     const slotList = timeSlots.map((t, i) => `${i + 1}. ${t}`).join('\n');
 
     return await this.sendMessage(phoneNumber,
-      `Date: ${dateStr}\n\nAvailable times:\n\n${slotList}\n\nReply with a number or enter a time (e.g., "10:30 AM"):`
+      `Date: ${dateStr}\n\nAvailable times:\n\n${slotList}\n\nReply with a number or enter a time (e.g., "10:30 AM"):`, ctx
     );
   }
 
-  private async handleSelectTime(phoneNumber: string, conversation: WhatsappConversation, input: string): Promise<string> {
+  private async handleSelectTime(phoneNumber: string, conversation: WhatsappConversation, input: string, ctx: RequestContext): Promise<string> {
     const context = conversation.context as ConversationContext;
     
     const timeSlots = this.generateTimeSlots();
@@ -611,7 +684,7 @@ class WhatsAppBookingService {
       if (!/^\d{1,2}:\d{2}\s*(AM|PM)?$/i.test(input)) {
         const slotList = timeSlots.map((t, i) => `${i + 1}. ${t}`).join('\n');
         return await this.sendMessage(phoneNumber,
-          `Please select a valid time:\n\n${slotList}`
+          `Please select a valid time:\n\n${slotList}`, ctx
         );
       }
     }
@@ -628,17 +701,18 @@ class WhatsAppBookingService {
       [
         { id: 'confirm', title: '✅ Confirm Booking' },
         { id: 'cancel', title: '❌ Cancel' },
-      ]
+      ],
+      ctx
     );
   }
 
-  private async handleConfirmDetails(phoneNumber: string, conversation: WhatsappConversation, input: string): Promise<string> {
+  private async handleConfirmDetails(phoneNumber: string, conversation: WhatsappConversation, input: string, ctx: RequestContext): Promise<string> {
     const context = conversation.context as ConversationContext;
 
     if (input === 'cancel' || input === '2' || input.includes('cancel')) {
       await this.resetConversation(conversation.id);
       return await this.sendMessage(phoneNumber,
-        "Booking cancelled. Reply anytime to start a new booking!"
+        "Booking cancelled. Reply anytime to start a new booking!", ctx
       );
     }
 
@@ -649,7 +723,8 @@ class WhatsAppBookingService {
         [
           { id: 'confirm', title: '✅ Confirm Booking' },
           { id: 'cancel', title: '❌ Cancel' },
-        ]
+        ],
+        ctx
       );
     }
 
@@ -714,17 +789,17 @@ class WhatsAppBookingService {
 
     if (paymentUrl) {
       return await this.sendMessage(phoneNumber,
-        `🎉 Booking Created!\n\nBooking #${booking.id}\n📅 ${context.selectedDate} at ${context.selectedTime}\n👤 ${context.selectedStaffName}\n📍 ${context.locationType === 'home' ? 'Home Service' : `At ${context.spaName}`}\n\nServices:\n${context.selectedServices?.map(s => `- ${s.name}`).join('\n')}\n\n💰 Total: AED ${context.totalAmount?.toFixed(0)}\n\n💳 Complete your payment here:\n${paymentUrl}\n\nOnce paid, you'll receive a confirmation message. Reply "pay later" to pay at the venue instead.`
+        `🎉 Booking Created!\n\nBooking #${booking.id}\n📅 ${context.selectedDate} at ${context.selectedTime}\n👤 ${context.selectedStaffName}\n📍 ${context.locationType === 'home' ? 'Home Service' : `At ${context.spaName}`}\n\nServices:\n${context.selectedServices?.map(s => `- ${s.name}`).join('\n')}\n\n💰 Total: AED ${context.totalAmount?.toFixed(0)}\n\n💳 Complete your payment here:\n${paymentUrl}\n\nOnce paid, you'll receive a confirmation message. Reply "pay later" to pay at the venue instead.`, ctx
       );
     } else {
       await this.updateConversation(conversation.id, 'completed', context);
       return await this.sendMessage(phoneNumber,
-        `🎉 Booking Confirmed!\n\nBooking #${booking.id}\n📅 ${context.selectedDate} at ${context.selectedTime}\n👤 ${context.selectedStaffName}\n📍 ${context.locationType === 'home' ? 'Home Service' : `At ${context.spaName}`}\n\nServices:\n${context.selectedServices?.map(s => `- ${s.name}`).join('\n')}\n\nTotal: AED ${context.totalAmount?.toFixed(0)}\n\nPayment will be collected at the venue. We look forward to seeing you! Reply anytime to make another booking.`
+        `🎉 Booking Confirmed!\n\nBooking #${booking.id}\n📅 ${context.selectedDate} at ${context.selectedTime}\n👤 ${context.selectedStaffName}\n📍 ${context.locationType === 'home' ? 'Home Service' : `At ${context.spaName}`}\n\nServices:\n${context.selectedServices?.map(s => `- ${s.name}`).join('\n')}\n\nTotal: AED ${context.totalAmount?.toFixed(0)}\n\nPayment will be collected at the venue. We look forward to seeing you! Reply anytime to make another booking.`, ctx
       );
     }
   }
 
-  private async handlePayment(phoneNumber: string, conversation: WhatsappConversation, input: string): Promise<string> {
+  private async handlePayment(phoneNumber: string, conversation: WhatsappConversation, input: string, ctx: RequestContext): Promise<string> {
     const context = conversation.context as ConversationContext & { bookingId?: number };
     
     if (input.includes('pay later') || input.includes('paylater') || input === 'later') {
@@ -736,24 +811,24 @@ class WhatsAppBookingService {
       await this.updateConversation(conversation.id, 'completed', context);
       
       return await this.sendMessage(phoneNumber,
-        `✅ No problem! Your booking #${context.bookingId} is confirmed.\n\n📍 Payment will be collected at the venue.\n📅 ${context.selectedDate} at ${context.selectedTime}\n\nWe look forward to seeing you! Reply anytime to make another booking.`
+        `✅ No problem! Your booking #${context.bookingId} is confirmed.\n\n📍 Payment will be collected at the venue.\n📅 ${context.selectedDate} at ${context.selectedTime}\n\nWe look forward to seeing you! Reply anytime to make another booking.`, ctx
       );
     }
 
     if (input === 'paid' || input.includes('completed') || input.includes('done')) {
       return await this.sendMessage(phoneNumber,
-        `Thank you! We'll verify your payment shortly and send you a confirmation. If you have any issues, please contact the spa directly.`
+        `Thank you! We'll verify your payment shortly and send you a confirmation. If you have any issues, please contact the spa directly.`, ctx
       );
     }
 
     return await this.sendMessage(phoneNumber,
-      `Your booking #${context.bookingId} is awaiting payment.\n\n💳 Please complete your payment using the link above, or reply "pay later" to pay at the venue instead.`
+      `Your booking #${context.bookingId} is awaiting payment.\n\n💳 Please complete your payment using the link above, or reply "pay later" to pay at the venue instead.`, ctx
     );
   }
 
-  private async sendCompletedMessage(phoneNumber: string, conversation: WhatsappConversation): Promise<string> {
+  private async sendCompletedMessage(phoneNumber: string, conversation: WhatsappConversation, ctx: RequestContext): Promise<string> {
     await this.resetConversation(conversation.id);
-    return await this.sendWelcomeMessage(phoneNumber, conversation);
+    return await this.sendWelcomeMessage(phoneNumber, conversation, ctx);
   }
 
   private buildBookingSummary(context: ConversationContext, selectedTime: string): string {
@@ -825,8 +900,13 @@ class WhatsAppBookingService {
     return slots;
   }
 
-  async sendDirectMessage(phoneNumber: string, message: string): Promise<void> {
-    await this.sendMessage(phoneNumber, message);
+  async sendDirectMessage(phoneNumber: string, message: string, spaId: number): Promise<void> {
+    const ctx = await this.getContextForSpa(spaId);
+    if (!ctx) {
+      console.log(`[WhatsApp] Cannot send message: no credentials for spa ${spaId}`);
+      return;
+    }
+    await this.sendMessage(phoneNumber, message, ctx);
   }
 
   async startReviewFlow(bookingId: number): Promise<boolean> {
@@ -861,6 +941,12 @@ class WhatsAppBookingService {
       .from(spas)
       .where(eq(spas.id, booking.spaId!));
 
+    const ctx = await this.getContextForSpa(booking.spaId!);
+    if (!ctx) {
+      console.log(`[Review] No WhatsApp credentials for spa ${booking.spaId}, skipping review`);
+      return false;
+    }
+    
     const now = new Date();
     const expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000);
 
@@ -911,7 +997,7 @@ Please rate your visit from 1-5 stars:
 
 Reply with a number (1-5), or type "skip" to book a new appointment instead.`;
 
-        await this.sendMessage(customer.phone, message);
+        await this.sendMessage(customer.phone, message, ctx);
         await this.logMessage(booking.conversationId, 'outbound', 'text', message);
         return true;
       }
@@ -920,7 +1006,12 @@ Reply with a number (1-5), or type "skip" to book a new appointment instead.`;
     const existingConversations = await db
       .select()
       .from(whatsappConversations)
-      .where(eq(whatsappConversations.phoneNumber, customer.phone))
+      .where(
+        and(
+          eq(whatsappConversations.phoneNumber, customer.phone),
+          eq(whatsappConversations.spaId, booking.spaId!)
+        )
+      )
       .orderBy(desc(whatsappConversations.createdAt))
       .limit(1);
 
@@ -962,7 +1053,7 @@ Please rate your visit from 1-5 stars:
 
 Reply with a number (1-5), or type "skip" to book a new appointment instead.`;
 
-      await this.sendMessage(customer.phone, message);
+      await this.sendMessage(customer.phone, message, ctx);
       await this.logMessage(existing.id, 'outbound', 'text', message);
       return true;
     }
@@ -995,7 +1086,7 @@ Please rate your visit from 1-5 stars:
 
 Reply with a number (1-5), or type "skip" to book a new appointment instead.`;
 
-    await this.sendMessage(customer.phone, message);
+    await this.sendMessage(customer.phone, message, ctx);
     await this.logMessage(conversation.id, 'outbound', 'text', message);
     return true;
   }
@@ -1003,13 +1094,14 @@ Reply with a number (1-5), or type "skip" to book a new appointment instead.`;
   private async handleReviewRating(
     phoneNumber: string,
     conversation: WhatsappConversation,
-    input: string
+    input: string,
+    ctx: RequestContext
   ): Promise<string> {
     const rating = parseInt(input, 10);
     
     if (isNaN(rating) || rating < 1 || rating > 5) {
       const message = "Please reply with a number from 1 to 5 to rate your experience.";
-      await this.sendMessage(phoneNumber, message);
+      await this.sendMessage(phoneNumber, message, ctx);
       return message;
     }
 
@@ -1032,7 +1124,7 @@ Would you like to leave a comment about your experience? (This helps us improve!
 
 Reply with your comment, or type "skip" to finish.`;
 
-    await this.sendMessage(phoneNumber, message);
+    await this.sendMessage(phoneNumber, message, ctx);
     await this.logMessage(conversation.id, 'outbound', 'text', message);
     return message;
   }
@@ -1040,7 +1132,8 @@ Reply with your comment, or type "skip" to finish.`;
   private async handleReviewComment(
     phoneNumber: string,
     conversation: WhatsappConversation,
-    input: string
+    input: string,
+    ctx: RequestContext
   ): Promise<string> {
     const context = (conversation.context as ConversationContext) || {};
     const comment = input.toLowerCase() === 'skip' ? null : input;
@@ -1079,20 +1172,21 @@ Reply "hi" to book your next appointment.`;
       })
       .where(eq(whatsappConversations.id, conversation.id));
 
-    await this.sendMessage(phoneNumber, message);
+    await this.sendMessage(phoneNumber, message, ctx);
     await this.logMessage(conversation.id, 'outbound', 'text', message);
     return message;
   }
 
   private async sendReviewCompletedMessage(
     phoneNumber: string,
-    conversation: WhatsappConversation
+    conversation: WhatsappConversation,
+    ctx: RequestContext
   ): Promise<string> {
     const context = (conversation.context as ConversationContext) || {};
     
     const message = `Thank you for your review! Reply "hi" to book your next appointment.`;
 
-    await this.sendMessage(phoneNumber, message);
+    await this.sendMessage(phoneNumber, message, ctx);
     await this.logMessage(conversation.id, 'outbound', 'text', message);
     return message;
   }
@@ -1128,16 +1222,27 @@ Reply "hi" to book your next appointment.`;
       .from(spas)
       .where(eq(spas.id, booking.spaId!));
 
+    const ctx = await this.getContextForSpa(booking.spaId!);
+    if (!ctx) {
+      console.log(`[Review] No WhatsApp credentials for spa ${booking.spaId}, skipping`);
+      return false;
+    }
+
     const conversations = await db
       .select()
       .from(whatsappConversations)
-      .where(eq(whatsappConversations.phoneNumber, customer.phone))
+      .where(
+        and(
+          eq(whatsappConversations.phoneNumber, customer.phone),
+          eq(whatsappConversations.spaId, booking.spaId!)
+        )
+      )
       .orderBy(desc(whatsappConversations.createdAt))
       .limit(1);
 
     const conversation = conversations[0];
     if (!conversation) {
-      console.log(`[Review] No conversation found for ${customer.phone}, skipping`);
+      console.log(`[Review] No conversation found for ${customer.phone} at spa ${booking.spaId}, skipping`);
       return false;
     }
 
@@ -1180,26 +1285,39 @@ Please rate your visit from 1-5 stars:
 
 Reply with a number (1-5), or type "skip" to book a new appointment instead.`;
 
-    await this.sendMessage(customer.phone, message);
+    await this.sendMessage(customer.phone, message, ctx);
     await this.logMessage(conversation.id, 'outbound', 'text', message);
     return true;
   }
 
   private async startOptInReview(
     phoneNumber: string,
-    conversation: WhatsappConversation
+    conversation: WhatsappConversation,
+    ctx: RequestContext
   ): Promise<string> {
     const [customer] = await db
       .select()
       .from(customers)
-      .where(eq(customers.phone, phoneNumber))
+      .where(
+        and(
+          eq(customers.phone, phoneNumber),
+          eq(customers.spaId, ctx.spaId)
+        )
+      )
       .limit(1);
 
     if (!customer) {
       const message = "You don't have any recent appointments to review. Reply 'hi' to book an appointment!";
-      await this.sendMessage(phoneNumber, message);
+      await this.sendMessage(phoneNumber, message, ctx);
       return message;
     }
+
+    const whereConditions = [
+      eq(bookings.customerId, customer.id),
+      eq(bookings.status, 'completed'),
+      eq(bookings.spaId, ctx.spaId),
+      isNull(customerReviews.id)
+    ];
 
     const [recentBooking] = await db
       .select({
@@ -1210,19 +1328,13 @@ Reply with a number (1-5), or type "skip" to book a new appointment instead.`;
       })
       .from(bookings)
       .leftJoin(customerReviews, eq(customerReviews.bookingId, bookings.id))
-      .where(
-        and(
-          eq(bookings.customerId, customer.id),
-          eq(bookings.status, 'completed'),
-          isNull(customerReviews.id)
-        )
-      )
+      .where(and(...whereConditions))
       .orderBy(desc(bookings.bookingDate))
       .limit(1);
 
     if (!recentBooking) {
       const message = "You don't have any recent appointments to review, or you've already rated them. Reply 'hi' to book a new appointment!";
-      await this.sendMessage(phoneNumber, message);
+      await this.sendMessage(phoneNumber, message, ctx);
       return message;
     }
 
@@ -1256,7 +1368,7 @@ Please rate your visit from 1-5 stars:
 
 Reply with a number (1-5), or type "skip" to go back to booking.`;
 
-    await this.sendMessage(phoneNumber, message);
+    await this.sendMessage(phoneNumber, message, ctx);
     await this.logMessage(conversation.id, 'outbound', 'text', message);
     return message;
   }
