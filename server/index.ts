@@ -259,7 +259,47 @@ app.use((req, res, next) => {
     reusePort: true,
   }, () => {
     log(`serving on port ${port}`);
-    
+
     appointmentScheduler.start();
+
+    // Initialize WhatsApp booking service with spa credentials
+    (async () => {
+      try {
+        const { whatsappBookingService } = await import('./whatsappBookingService');
+        const { spaNotificationCredentials } = await import('../shared/schema');
+        const { db } = await import('./db');
+        const { eq, and } = await import('drizzle-orm');
+        const { decryptJSON } = await import('./encryptionService');
+
+        // Load first active WhatsApp credentials
+        const [creds] = await db
+          .select()
+          .from(spaNotificationCredentials)
+          .where(
+            and(
+              eq(spaNotificationCredentials.channel, 'whatsapp'),
+              eq(spaNotificationCredentials.isActive, true)
+            )
+          )
+          .limit(1);
+
+        if (creds) {
+          const decrypted = decryptJSON(creds.encryptedCredentials);
+          await whatsappBookingService.initialize(
+            decrypted.accountSid,
+            decrypted.authToken,
+            creds.fromPhone
+          );
+          logger.info('✅ WhatsApp service initialized', {
+            spaId: creds.spaId,
+            fromPhone: creds.fromPhone
+          });
+        } else {
+          logger.warn('⚠️  No WhatsApp credentials configured - service in DEV MODE');
+        }
+      } catch (error: any) {
+        logger.error('❌ Failed to initialize WhatsApp service', { error: error.message });
+      }
+    })();
   });
 })();
