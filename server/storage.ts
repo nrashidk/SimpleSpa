@@ -118,6 +118,7 @@ export interface IStorage {
   setPasswordResetToken(userId: string, hashedToken: string, expiresAt: Date): Promise<void>;
   getUserByResetToken(hashedToken: string): Promise<User | undefined>;
   clearPasswordResetToken(userId: string): Promise<void>;
+  updateUserLoginAttempts(userId: string, attempts: number, lockedUntil: Date | null): Promise<void>;
 
   // Admin Application operations
   createAdminApplication(application: InsertAdminApplication): Promise<AdminApplication>;
@@ -477,6 +478,17 @@ export class DatabaseStorage implements IStorage {
       .set({ 
         passwordResetToken: null, 
         passwordResetExpires: null, 
+        updatedAt: new Date() 
+      })
+      .where(eq(users.id, userId));
+  }
+
+  async updateUserLoginAttempts(userId: string, attempts: number, lockedUntil: Date | null): Promise<void> {
+    await db
+      .update(users)
+      .set({ 
+        failedLoginAttempts: attempts, 
+        lockedUntil: lockedUntil,
         updatedAt: new Date() 
       })
       .where(eq(users.id, userId));

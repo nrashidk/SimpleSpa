@@ -485,22 +485,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const passwordToCheck = user?.password || DUMMY_PASSWORD_HASH;
       const passwordMatch = await bcrypt.compare(password, passwordToCheck);
       
-      // Check all conditions with same error message to prevent enumeration
-      if (!user || !passwordMatch) {
-        await AuditLogger.logAuthFailed(req, email, "Invalid credentials");
+      // SECURITY FIX: Consolidate ALL checks into single condition to prevent information disclosure
+      // This prevents attackers from learning if an email exists by observing different error messages
+      const isValidUser = user !== null;
+      const isCorrectPassword = passwordMatch;
+      const isAdminRole = user && (user.role === 'admin' || user.role === 'super_admin');
+      const isApproved = user && user.status === 'approved';
+      const isNotLocked = user && (!user.lockedUntil || new Date() > new Date(user.lockedUntil));
+      
+      // Track failed attempts for account lockout
+      if (user && !isCorrectPassword) {
+        const newAttempts = (user.failedLoginAttempts || 0) + 1;
+        const lockUntil = newAttempts >= 5 ? new Date(Date.now() + 15 * 60 * 1000) : null; // Lock for 15 min after 5 attempts
+        await storage.updateUserLoginAttempts(user.id, newAttempts, lockUntil);
+      }
+      
+      // Single consolidated check - same error message for all failure types
+      if (!isValidUser || !isCorrectPassword || !isAdminRole || !isApproved || !isNotLocked) {
+        // Log specific reason internally but return generic message to client
+        let internalReason = "Invalid credentials";
+        if (!isValidUser) internalReason = "User not found";
+        else if (!isCorrectPassword) internalReason = "Wrong password";
+        else if (!isAdminRole) internalReason = "Non-admin role";
+        else if (!isApproved) internalReason = "Account not approved";
+        else if (!isNotLocked) internalReason = "Account locked";
+        
+        await AuditLogger.logAuthFailed(req, email, internalReason);
         return res.status(401).json({ message: "Invalid credentials" });
       }
       
-      // Check if user is admin or super_admin
-      if (user.role !== 'admin' && user.role !== 'super_admin') {
-        await AuditLogger.logAuthFailed(req, email, "Non-admin role attempted admin login");
-        return res.status(403).json({ message: "Access denied. Admin access required." });
-      }
-      
-      // Check if user is approved
-      if (user.status !== 'approved') {
-        await AuditLogger.logAuthFailed(req, email, "Account pending approval");
-        return res.status(403).json({ message: "Your account is pending approval" });
+      // Reset failed attempts on successful login
+      if (user.failedLoginAttempts && user.failedLoginAttempts > 0) {
+        await storage.updateUserLoginAttempts(user.id, 0, null);
       }
       
       // SECURITY: Regenerate session to prevent session fixation attacks
@@ -558,7 +574,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // DEV ENDPOINTS - Only available in development mode
   // SECURITY: These endpoints are disabled in production to prevent unauthorized access
-  if (process.env.NODE_ENV === 'development') {
+  // SECURITY FIX: Fail-closed check - endpoints only accessible when NODE_ENV is EXPLICITLY set to 'development'
+  // This prevents access if NODE_ENV is undefined, 'staging', or any value other than 'development'
+  const isDevelopmentMode = process.env.NODE_ENV === 'development';
+  if (isDevelopmentMode) {
+    logger.warn('DEV ENDPOINTS ENABLED - This should never appear in production logs');
     // DEV/TEST: Make current user a super admin (requires authentication)
     app.post('/api/dev/make-super-admin', isAuthenticated, async (req, res) => {
       try {

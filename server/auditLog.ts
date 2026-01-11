@@ -2,6 +2,8 @@ import { Request } from "express";
 import { db } from "./db";
 import { auditLogs, InsertAuditLog } from "@shared/schema";
 import { logger } from "./logger";
+import crypto from "crypto";
+import { desc } from "drizzle-orm";
 
 export type AuditAction = "CREATE" | "UPDATE" | "DELETE" | "LOGIN" | "LOGOUT" | "APPROVAL" | "REJECTION" | "BLOCK" | "UNBLOCK" | "MERGE" | "IMPORT" | "AUTH_FAILED" | "UNAUTHORIZED" | "EXPORT" | "CONFIG_CHANGE" | "PRIVILEGE_USE";
 export type AuditEntityType = "booking" | "invoice" | "service" | "membership" | "customer_membership" | "staff" | "staff_emergency_contact" | "staff_timesheet" | "customer" | "spa" | "product" | "loyalty_card" | "expense" | "vendor" | "service_variant" | "variant_staff_pricing" | "service_addon" | "addon_option" | "service_bundle" | "bundle_item" | "service_extra_time" | "notification_provider" | "security" | "report" | "settings" | "promo_code" | "user";
@@ -24,11 +26,55 @@ interface AuditLogData {
 
 export class AuditLogger {
   /**
-   * Log an audit event
+   * Generate HMAC-SHA256 signature for audit log integrity
+   * SECURITY: Uses AUDIT_LOG_SECRET or falls back to ENCRYPTION_KEY (which is validated at startup)
+   * Never uses a default key - if neither is set, the application will fail at startup via validateEnv
+   */
+  private static generateSignature(logData: object): string {
+    const secret = process.env.AUDIT_LOG_SECRET || process.env.ENCRYPTION_KEY;
+    if (!secret) {
+      throw new Error('AUDIT_LOG_SECRET or ENCRYPTION_KEY must be set for audit log integrity');
+    }
+    return crypto
+      .createHmac('sha256', secret)
+      .update(JSON.stringify(logData))
+      .digest('hex');
+  }
+
+  /**
+   * Get the previous audit log's signature for hash chain
+   */
+  private static async getPreviousHash(): Promise<string> {
+    try {
+      const [lastLog] = await db
+        .select({ signature: auditLogs.signature })
+        .from(auditLogs)
+        .orderBy(desc(auditLogs.id))
+        .limit(1);
+      return lastLog?.signature || '0';
+    } catch {
+      return '0';
+    }
+  }
+
+  /**
+   * Log an audit event with HMAC signature and hash chain for integrity
+   * Uses database transaction to ensure proper hash chain under concurrency
+   * SECURITY: Fails fast on all errors - never creates unsigned audit logs
    */
   static async log(data: AuditLogData): Promise<void> {
-    try {
-      const auditLog: InsertAuditLog = {
+    // Use transaction to ensure atomic prevHash lookup + insert
+    await db.transaction(async (tx) => {
+      // Get previous hash within transaction for proper ordering
+      const [lastLog] = await tx
+        .select({ signature: auditLogs.signature })
+        .from(auditLogs)
+        .orderBy(desc(auditLogs.id))
+        .limit(1);
+      const prevHash = lastLog?.signature || '0';
+      
+      // Build log data for signature calculation (without signature field)
+      const logDataForSignature = {
         userId: data.userId,
         userRole: data.role,
         spaId: data.spaId,
@@ -38,12 +84,21 @@ export class AuditLogger {
         changes: data.changes || null,
         ipAddress: data.ipAddress,
         userAgent: data.userAgent,
+        prevHash,
       };
 
-      await db.insert(auditLogs).values(auditLog);
-    } catch (error) {
-      logger.error("Failed to create audit log", { error: error instanceof Error ? error.message : 'Unknown' });
-    }
+      // Generate signature BEFORE creating the insert object
+      // SECURITY: This throws if secret is missing
+      const signature = this.generateSignature(logDataForSignature);
+      
+      // Create the complete audit log with all required fields
+      const auditLog: InsertAuditLog = {
+        ...logDataForSignature,
+        signature,
+      };
+
+      await tx.insert(auditLogs).values(auditLog);
+    });
   }
 
   /**

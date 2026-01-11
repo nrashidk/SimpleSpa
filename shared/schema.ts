@@ -30,6 +30,8 @@ export const users = pgTable("users", {
   emailVerified: boolean("email_verified").default(false), // Whether email is verified
   passwordResetToken: varchar("password_reset_token"), // Secure token for password reset
   passwordResetExpires: timestamp("password_reset_expires"), // Token expiration time
+  failedLoginAttempts: integer("failed_login_attempts").default(0), // Tracks failed login attempts for account lockout
+  lockedUntil: timestamp("locked_until"), // Account locked until this time after too many failed attempts
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -1033,6 +1035,8 @@ export const auditLogs = pgTable("audit_logs", {
   changes: jsonb("changes"), // Store old/new values
   ipAddress: text("ip_address"),
   userAgent: text("user_agent"),
+  signature: varchar("signature", { length: 128 }).notNull(), // HMAC-SHA256 signature for integrity verification (required)
+  prevHash: varchar("prev_hash", { length: 128 }).notNull(), // Hash chain linking to previous entry (required)
   createdAt: timestamp("created_at").defaultNow().notNull(),
 }, (table) => [
   index("idx_audit_user").on(table.userId),

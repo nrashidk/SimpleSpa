@@ -8,8 +8,9 @@ const envSchema = z.object({
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
   PORT: z.string().regex(/^\d+$/).transform(Number).default("5000"),
   // ENCRYPTION_KEY is required for secure credential storage (OAuth tokens, notification provider credentials)
+  // Also used for audit log HMAC signatures when AUDIT_LOG_SECRET is not set
   ENCRYPTION_KEY: z.string()
-    .min(32, "ENCRYPTION_KEY is required and must be at least 32 characters for 256-bit security"),
+    .min(32, "ENCRYPTION_KEY is required and must be at least 32 characters for 256-bit security (also used for audit log integrity)"),
 });
 
 // Additional validation for production environment

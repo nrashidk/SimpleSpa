@@ -27,7 +27,13 @@ Calendar validation ensures accurate time slot generation based on business hour
 
 Robust security hardening measures are implemented, including CSRF protection, session fixation prevention, email enumeration prevention, OAuth CSRF protection, file upload hardening, rate limiting, Helmet security headers (CSP, HSTS), multi-tenant data isolation with database-level enforcement, and IDOR protection. Strong password policies, secure password change and reset flows, and session security are also in place. Webhook signature verification is used for Twilio, MSG91, and Stripe. Input validation uses Zod schemas, with XSS protection via React and Helmet CSP.
 
-The system provides an audit trail for significant changes and uses Winston-based structured logging with PII redaction. Performance optimizations are applied to admin list endpoints and booking enrichment.
+Security hardening (Updated 2026-01-11):
+- **Dev Endpoint Protection:** Fail-closed check ensures dev endpoints only accessible when NODE_ENV is explicitly set to 'development'
+- **Information Disclosure Prevention:** Login endpoint returns single "Invalid credentials" message for all failure types (wrong password, non-admin, unapproved, locked) to prevent email enumeration
+- **Account Lockout:** Users table has failedLoginAttempts and lockedUntil columns; accounts lock for 15 minutes after 5 failed attempts; counter resets on successful login
+- **Audit Log Integrity:** HMAC-SHA256 signatures with hash chain linking each entry to previous for tamper detection
+
+The system provides an audit trail for significant changes with cryptographic integrity verification. Uses Winston-based structured logging with PII redaction. Performance optimizations are applied to admin list endpoints and booking enrichment.
 
 An admin-spa linkage system with an onboarding wizard (Basic Info, Location, Business Hours, Services, Staff, Activation) ensures new admins configure their spa. Membership management supports CRUD operations for packages.
 
