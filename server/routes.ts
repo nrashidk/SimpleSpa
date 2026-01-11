@@ -2722,11 +2722,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/admin/customer-memberships/customer/:customerId", isAdmin, async (req, res) => {
+  app.get("/api/admin/customer-memberships/customer/:customerId", isAdmin, injectAdminSpa, async (req: any, res) => {
     try {
       const customerId = parseNumericId(req.params.customerId);
       if (!customerId) {
         return res.status(400).json({ message: "Invalid customer ID" });
+      }
+      // IDOR protection: verify customer belongs to admin's spa
+      const customer = await storage.getCustomerById(customerId);
+      if (!customer || customer.spaId !== req.adminSpa.id) {
+        return res.status(403).json({ message: "Access denied" });
       }
       
       const customerMemberships = await storage.getCustomerMembershipsByCustomerId(customerId);
@@ -2758,17 +2763,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       const before = await storage.getCustomerMembershipById(id);
+      if (!before) {
+        return res.status(404).json({ message: "Customer membership not found" });
+      }
+      // IDOR protection: verify ownership via customer's spaId
+      const customer = await storage.getCustomerById(before.customerId);
+      if (!customer || customer.spaId !== req.adminSpa.id) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      
       const validatedData = insertCustomerMembershipSchema.partial().parse(req.body);
       const customerMembership = await storage.updateCustomerMembership(id, validatedData);
       
       if (!customerMembership) {
-        return res.status(404).json({ message: "Customer membership not found" });
+        return res.status(404).json({ message: "Customer membership not found or deleted" });
       }
       
       // Log update
-      if (before) {
-        await AuditLogger.logUpdate(req, "customer_membership", id, before, validatedData, req.adminSpa.id);
-      }
+      await AuditLogger.logUpdate(req, "customer_membership", id, before, validatedData, req.adminSpa.id);
       
       res.json(customerMembership);
     } catch (error) {
@@ -2777,11 +2789,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Membership usage tracking
-  app.get("/api/admin/membership-usage/:customerMembershipId", isAdmin, async (req, res) => {
+  app.get("/api/admin/membership-usage/:customerMembershipId", isAdmin, injectAdminSpa, async (req: any, res) => {
     try {
       const customerMembershipId = parseNumericId(req.params.customerMembershipId);
       if (!customerMembershipId) {
         return res.status(400).json({ message: "Invalid customer membership ID" });
+      }
+      // IDOR protection: verify ownership via customer membership's customer
+      const membership = await storage.getCustomerMembershipById(customerMembershipId);
+      if (!membership) {
+        return res.status(404).json({ message: "Customer membership not found" });
+      }
+      const customer = await storage.getCustomerById(membership.customerId);
+      if (!customer || customer.spaId !== req.adminSpa.id) {
+        return res.status(403).json({ message: "Access denied" });
       }
       
       const usage = await storage.getMembershipUsageByCustomerMembershipId(customerMembershipId);
@@ -2794,11 +2815,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/admin/membership-usage", isAdmin, injectAdminSpa, ensureSetupComplete, async (req: any, res) => {
     try {
       const validatedData = insertMembershipUsageSchema.parse(req.body);
+      
+      // IDOR protection: verify ownership via customer membership's customer
+      const customerMembership = await storage.getCustomerMembershipById(validatedData.customerMembershipId);
+      if (!customerMembership) {
+        return res.status(404).json({ message: "Customer membership not found" });
+      }
+      const customer = await storage.getCustomerById(customerMembership.customerId);
+      if (!customer || customer.spaId !== req.adminSpa.id) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      
       const usage = await storage.createMembershipUsage(validatedData);
       
       // Update remaining sessions for limited memberships
-      const customerMembership = await storage.getCustomerMembershipById(validatedData.customerMembershipId);
-      if (customerMembership && customerMembership.sessionsRemaining !== null) {
+      if (customerMembership.sessionsRemaining !== null) {
         await storage.updateCustomerMembership(validatedData.customerMembershipId, {
           sessionsRemaining: Math.max(0, customerMembership.sessionsRemaining - 1),
         });
@@ -3934,7 +3965,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/admin/loyalty-cards/:id", isAdmin, async (req, res) => {
+  app.get("/api/admin/loyalty-cards/:id", isAdmin, injectAdminSpa, async (req: any, res) => {
     try {
       const id = parseNumericId(req.params.id);
       if (id === null) {
@@ -3943,6 +3974,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const card = await storage.getLoyaltyCardById(id);
       if (!card) {
         return res.status(404).json({ message: "Loyalty card not found" });
+      }
+      // IDOR protection: verify ownership via customer's spaId
+      const customer = await storage.getCustomerById(card.customerId);
+      if (!customer || customer.spaId !== req.adminSpa.id) {
+        return res.status(403).json({ message: "Access denied" });
       }
       res.json(card);
     } catch (error) {
@@ -3979,17 +4015,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put("/api/admin/loyalty-cards/:id", isAdmin, async (req, res) => {
+  app.put("/api/admin/loyalty-cards/:id", isAdmin, injectAdminSpa, async (req: any, res) => {
     try {
       const id = parseNumericId(req.params.id);
       if (id === null) {
         return res.status(400).json({ message: "Invalid loyalty card ID" });
       }
-      const validatedData = insertLoyaltyCardSchema.partial().parse(req.body);
-      const card = await storage.updateLoyaltyCard(id, validatedData);
-      if (!card) {
+      // IDOR protection: verify ownership via customer's spaId
+      const existing = await storage.getLoyaltyCardById(id);
+      if (!existing) {
         return res.status(404).json({ message: "Loyalty card not found" });
       }
+      const customer = await storage.getCustomerById(existing.customerId);
+      if (!customer || customer.spaId !== req.adminSpa.id) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      const validatedData = insertLoyaltyCardSchema.partial().parse(req.body);
+      const card = await storage.updateLoyaltyCard(id, validatedData);
       res.json(card);
     } catch (error: any) {
       if (error.name === "ZodError") {
@@ -4000,16 +4042,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete("/api/admin/loyalty-cards/:id", isAdmin, async (req, res) => {
+  app.delete("/api/admin/loyalty-cards/:id", isAdmin, injectAdminSpa, async (req: any, res) => {
     try {
       const id = parseNumericId(req.params.id);
       if (id === null) {
         return res.status(400).json({ message: "Invalid loyalty card ID" });
       }
-      const deleted = await storage.deleteLoyaltyCard(id);
-      if (!deleted) {
+      // IDOR protection: verify ownership via customer's spaId
+      const existing = await storage.getLoyaltyCardById(id);
+      if (!existing) {
         return res.status(404).json({ message: "Loyalty card not found" });
       }
+      const customer = await storage.getCustomerById(existing.customerId);
+      if (!customer || customer.spaId !== req.adminSpa.id) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      const deleted = await storage.deleteLoyaltyCard(id);
       res.json({ success: true });
     } catch (error) {
       console.error("Error deleting loyalty card:", error);
@@ -4085,7 +4133,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/admin/product-sales/:id", isAdmin, async (req, res) => {
+  app.get("/api/admin/product-sales/:id", isAdmin, injectAdminSpa, async (req: any, res) => {
     try {
       const id = parseNumericId(req.params.id);
       if (id === null) {
@@ -4094,6 +4142,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const sale = await storage.getProductSaleById(id);
       if (!sale) {
         return res.status(404).json({ message: "Product sale not found" });
+      }
+      // IDOR protection: verify ownership via customer's spaId
+      if (sale.customerId) {
+        const customer = await storage.getCustomerById(sale.customerId);
+        if (!customer || customer.spaId !== req.adminSpa.id) {
+          return res.status(403).json({ message: "Access denied" });
+        }
       }
       res.json(sale);
     } catch (error) {
@@ -4130,17 +4185,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put("/api/admin/product-sales/:id", isAdmin, async (req, res) => {
+  app.put("/api/admin/product-sales/:id", isAdmin, injectAdminSpa, async (req: any, res) => {
     try {
       const id = parseNumericId(req.params.id);
       if (id === null) {
         return res.status(400).json({ message: "Invalid product sale ID" });
       }
-      const validatedData = insertProductSaleSchema.partial().parse(req.body);
-      const sale = await storage.updateProductSale(id, validatedData);
-      if (!sale) {
+      // IDOR protection: verify ownership via customer's spaId
+      const existing = await storage.getProductSaleById(id);
+      if (!existing) {
         return res.status(404).json({ message: "Product sale not found" });
       }
+      if (existing.customerId) {
+        const customer = await storage.getCustomerById(existing.customerId);
+        if (!customer || customer.spaId !== req.adminSpa.id) {
+          return res.status(403).json({ message: "Access denied" });
+        }
+      }
+      const validatedData = insertProductSaleSchema.partial().parse(req.body);
+      const sale = await storage.updateProductSale(id, validatedData);
       res.json(sale);
     } catch (error: any) {
       if (error.name === "ZodError") {
@@ -4151,16 +4214,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete("/api/admin/product-sales/:id", isAdmin, async (req, res) => {
+  app.delete("/api/admin/product-sales/:id", isAdmin, injectAdminSpa, async (req: any, res) => {
     try {
       const id = parseNumericId(req.params.id);
       if (id === null) {
         return res.status(400).json({ message: "Invalid product sale ID" });
       }
-      const deleted = await storage.deleteProductSale(id);
-      if (!deleted) {
+      // IDOR protection: verify ownership via customer's spaId
+      const existing = await storage.getProductSaleById(id);
+      if (!existing) {
         return res.status(404).json({ message: "Product sale not found" });
       }
+      if (existing.customerId) {
+        const customer = await storage.getCustomerById(existing.customerId);
+        if (!customer || customer.spaId !== req.adminSpa.id) {
+          return res.status(403).json({ message: "Access denied" });
+        }
+      }
+      const deleted = await storage.deleteProductSale(id);
       res.json({ success: true });
     } catch (error) {
       console.error("Error deleting product sale:", error);
@@ -4179,7 +4250,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/admin/vendors/:id", isAdmin, async (req, res) => {
+  app.get("/api/admin/vendors/:id", isAdmin, injectAdminSpa, async (req: any, res) => {
     try {
       const id = parseNumericId(req.params.id);
       if (id === null) {
@@ -4188,6 +4259,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const vendor = await storage.getVendorById(id);
       if (!vendor) {
         return res.status(404).json({ message: "Vendor not found" });
+      }
+      // IDOR protection: verify ownership
+      if (vendor.spaId !== req.adminSpa.id) {
+        return res.status(403).json({ message: "Access denied" });
       }
       res.json(vendor);
     } catch (error) {
@@ -4205,33 +4280,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put("/api/admin/vendors/:id", isAdmin, async (req, res) => {
+  app.put("/api/admin/vendors/:id", isAdmin, injectAdminSpa, async (req: any, res) => {
     try {
       const id = parseNumericId(req.params.id);
       if (id === null) {
         return res.status(400).json({ message: "Invalid vendor ID" });
       }
-      const validatedData = insertVendorSchema.partial().parse(req.body);
-      const vendor = await storage.updateVendor(id, validatedData);
-      if (!vendor) {
+      // IDOR protection: verify ownership before update
+      const existing = await storage.getVendorById(id);
+      if (!existing) {
         return res.status(404).json({ message: "Vendor not found" });
       }
+      if (existing.spaId !== req.adminSpa.id) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      const validatedData = insertVendorSchema.partial().parse(req.body);
+      const vendor = await storage.updateVendor(id, validatedData);
       res.json(vendor);
     } catch (error) {
       handleRouteError(res, error, "Failed to update vendor");
     }
   });
 
-  app.delete("/api/admin/vendors/:id", isAdmin, async (req, res) => {
+  app.delete("/api/admin/vendors/:id", isAdmin, injectAdminSpa, async (req: any, res) => {
     try {
       const id = parseNumericId(req.params.id);
       if (id === null) {
         return res.status(400).json({ message: "Invalid vendor ID" });
       }
-      const deleted = await storage.deleteVendor(id);
-      if (!deleted) {
+      // IDOR protection: verify ownership before delete
+      const existing = await storage.getVendorById(id);
+      if (!existing) {
         return res.status(404).json({ message: "Vendor not found" });
       }
+      if (existing.spaId !== req.adminSpa.id) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      const deleted = await storage.deleteVendor(id);
       res.json({ success: true });
     } catch (error) {
       handleRouteError(res, error, "Failed to delete vendor");
@@ -4249,7 +4334,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/admin/expenses/:id", isAdmin, async (req, res) => {
+  app.get("/api/admin/expenses/:id", isAdmin, injectAdminSpa, async (req: any, res) => {
     try {
       const id = parseNumericId(req.params.id);
       if (id === null) {
@@ -4258,6 +4343,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const expense = await storage.getExpenseById(id);
       if (!expense) {
         return res.status(404).json({ message: "Expense not found" });
+      }
+      // IDOR protection: verify ownership
+      if (expense.spaId !== req.adminSpa.id) {
+        return res.status(403).json({ message: "Access denied" });
       }
       res.json(expense);
     } catch (error) {
@@ -4275,33 +4364,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put("/api/admin/expenses/:id", isAdmin, async (req, res) => {
+  app.put("/api/admin/expenses/:id", isAdmin, injectAdminSpa, async (req: any, res) => {
     try {
       const id = parseNumericId(req.params.id);
       if (id === null) {
         return res.status(400).json({ message: "Invalid expense ID" });
       }
-      const validatedData = insertExpenseSchema.partial().parse(req.body);
-      const expense = await storage.updateExpense(id, validatedData);
-      if (!expense) {
+      // IDOR protection: verify ownership before update
+      const existing = await storage.getExpenseById(id);
+      if (!existing) {
         return res.status(404).json({ message: "Expense not found" });
       }
+      if (existing.spaId !== req.adminSpa.id) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      const validatedData = insertExpenseSchema.partial().parse(req.body);
+      const expense = await storage.updateExpense(id, validatedData);
       res.json(expense);
     } catch (error) {
       handleRouteError(res, error, "Failed to update expense");
     }
   });
 
-  app.delete("/api/admin/expenses/:id", isAdmin, async (req, res) => {
+  app.delete("/api/admin/expenses/:id", isAdmin, injectAdminSpa, async (req: any, res) => {
     try {
       const id = parseNumericId(req.params.id);
       if (id === null) {
         return res.status(400).json({ message: "Invalid expense ID" });
       }
-      const deleted = await storage.deleteExpense(id);
-      if (!deleted) {
+      // IDOR protection: verify ownership before delete
+      const existing = await storage.getExpenseById(id);
+      if (!existing) {
         return res.status(404).json({ message: "Expense not found" });
       }
+      if (existing.spaId !== req.adminSpa.id) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      const deleted = await storage.deleteExpense(id);
       res.json({ success: true });
     } catch (error) {
       handleRouteError(res, error, "Failed to delete expense");
@@ -4319,7 +4418,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/admin/bills/:id", isAdmin, async (req, res) => {
+  app.get("/api/admin/bills/:id", isAdmin, injectAdminSpa, async (req: any, res) => {
     try {
       const id = parseNumericId(req.params.id);
       if (id === null) {
@@ -4328,6 +4427,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const bill = await storage.getBillById(id);
       if (!bill) {
         return res.status(404).json({ message: "Bill not found" });
+      }
+      // IDOR protection: verify ownership
+      if (bill.spaId !== req.adminSpa.id) {
+        return res.status(403).json({ message: "Access denied" });
       }
       res.json(bill);
     } catch (error) {
@@ -4345,33 +4448,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put("/api/admin/bills/:id", isAdmin, async (req, res) => {
+  app.put("/api/admin/bills/:id", isAdmin, injectAdminSpa, async (req: any, res) => {
     try {
       const id = parseNumericId(req.params.id);
       if (id === null) {
         return res.status(400).json({ message: "Invalid bill ID" });
       }
-      const validatedData = insertBillSchema.partial().parse(req.body);
-      const bill = await storage.updateBill(id, validatedData);
-      if (!bill) {
+      // IDOR protection: verify ownership before update
+      const existing = await storage.getBillById(id);
+      if (!existing) {
         return res.status(404).json({ message: "Bill not found" });
       }
+      if (existing.spaId !== req.adminSpa.id) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      const validatedData = insertBillSchema.partial().parse(req.body);
+      const bill = await storage.updateBill(id, validatedData);
       res.json(bill);
     } catch (error) {
       handleRouteError(res, error, "Failed to update bill");
     }
   });
 
-  app.delete("/api/admin/bills/:id", isAdmin, async (req, res) => {
+  app.delete("/api/admin/bills/:id", isAdmin, injectAdminSpa, async (req: any, res) => {
     try {
       const id = parseNumericId(req.params.id);
       if (id === null) {
         return res.status(400).json({ message: "Invalid bill ID" });
       }
-      const deleted = await storage.deleteBill(id);
-      if (!deleted) {
+      // IDOR protection: verify ownership before delete
+      const existing = await storage.getBillById(id);
+      if (!existing) {
         return res.status(404).json({ message: "Bill not found" });
       }
+      if (existing.spaId !== req.adminSpa.id) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      const deleted = await storage.deleteBill(id);
       res.json({ success: true });
     } catch (error) {
       handleRouteError(res, error, "Failed to delete bill");

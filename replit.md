@@ -47,7 +47,12 @@ The backend utilizes a PostgreSQL database and an Express-based REST API.
       - Supporting tables: service-categories, memberships, customer-memberships, timesheets, loyalty-cards, product-sales
       - All admin GET list endpoints use injectAdminSpa middleware to enforce tenant isolation
       - Loyalty cards and product sales filter via customer.spaId join
-    - **IDOR Protection:** All DELETE/UPDATE endpoints verify resource ownership before mutation
+    - **IDOR Protection (Updated 2026-01-11):** Comprehensive ownership verification for all admin endpoints:
+      - GET single-record endpoints verify resource belongs to admin's spa before returning data
+      - PUT/DELETE endpoints verify ownership before mutation
+      - Finance tables (vendors, bills, expenses) check resource.spaId === req.adminSpa.id
+      - Customer-linked tables (loyalty-cards, product-sales, customer-memberships) verify via customer.spaId
+      - Membership usage endpoints verify ownership via customerMembership -> customer -> spaId chain
     - **Strong Password Policy:** 12+ characters with uppercase, lowercase, numbers, and special characters
     - **Password Change (Added 2026-01-08):** Secure password change endpoint at PUT /api/admin/change-password with current password verification, full password policy validation, and audit logging
     - **Password Reset (Added 2026-01-08):** Secure admin password reset flow with POST /api/admin/forgot-password and POST /api/admin/reset-password endpoints. Features SHA-256 token hashing, 1-hour token expiry, email enumeration prevention (constant response), and rate limiting. UI pages at /admin/forgot-password and /admin/reset-password.
