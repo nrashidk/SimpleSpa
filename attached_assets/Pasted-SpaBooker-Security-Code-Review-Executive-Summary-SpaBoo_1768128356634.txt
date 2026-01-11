@@ -1,0 +1,559 @@
+SpaBooker Security & Code Review
+Executive Summary
+SpaBooker is a well-architected multi-tenant booking platform with strong security fundamentals in place. The team has implemented enterprise-grade security controls including CSRF protection, rate limiting, audit logging with cryptographic integrity, and proper encryption for sensitive data. However, there are critical high-impact issues that need immediate attention, along with architectural improvements to support long-term scalability.
+
+Overall Security Grade: B+ (Good with Critical Gaps)
+Code Quality Grade: B (Solid but needs refactoring)
+
+1. Security & Privacy (Critical Issues Only)
+🔴 CRITICAL - High Risk
+1.1 Stripe Webhook Secret Not Enforced (Payment Security)
+Location: server/stripeWebhook.ts:16-21
+
+Issue:
+
+if (webhookSecret) {
+  event = stripe.webhooks.constructEvent(payload, signature, webhookSecret);
+} else {
+  logger.warn('[Stripe Webhook] No webhook secret configured, parsing payload directly');
+  event = JSON.parse(payload.toString());
+}
+
+Risk: Without signature verification, attackers can forge payment webhooks to:
+
+Mark unpaid bookings as paid
+Trigger fraudulent refunds
+Manipulate booking status
+Impact: Financial fraud, revenue loss, booking system compromise
+
+Fix:
+
+// REQUIRE webhook secret - fail hard if not configured
+const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+if (!webhookSecret) {
+  throw new Error('STRIPE_WEBHOOK_SECRET is required for secure payment processing');
+}
+event = stripe.webhooks.constructEvent(payload, signature, webhookSecret);
+
+Priority: IMMEDIATE - This is a financial security vulnerability
+
+1.2 SQL Injection Risk via Template Literals
+Location: server/storage.ts:413, 553, 561, 569, 577 and others
+
+Issue:
+
+.where(sql`LOWER(${users.email}) = ${normalizedEmail}`)
+
+While Drizzle ORM provides parameterization, the use of sql template literals with interpolated values is inconsistent and could lead to SQL injection if developers aren't careful with string concatenation.
+
+Risk: SQL injection if any code path allows unsanitized user input into sql templates
+
+Safer Pattern:
+
+// Use Drizzle's type-safe query builder instead
+.where(eq(sql`LOWER(${users.email})`, normalizedEmail))
+// Or better - add a generated column for lowercase email
+
+Impact: Database compromise, data exfiltration, privilege escalation
+
+Fix:
+
+Add database-level generated columns for case-insensitive searches
+Use Drizzle's query builder consistently
+Add SQL injection tests to test suite
+Priority: HIGH
+
+1.3 OTP Storage in Memory (Authentication Bypass)
+Location: server/firebaseAuth.ts:331
+
+Issue:
+
+const otpStore = new Map<string, { otp: string; expiresAt: number; attempts: number }>();
+
+Risk:
+
+OTPs lost on server restart → users locked out
+No distributed support → breaks in multi-instance deployments
+No rate limiting per phone number across instances
+Memory leak if cleanup fails
+Impact:
+
+Authentication failures in production
+Horizontal scaling blocked
+Potential DoS via OTP flooding
+Fix:
+
+// Use Redis or database table
+CREATE TABLE otp_codes (
+  phone VARCHAR(20) PRIMARY KEY,
+  otp VARCHAR(6) NOT NULL,
+  expires_at TIMESTAMP NOT NULL,
+  attempts INT DEFAULT 0,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX idx_otp_expires ON otp_codes(expires_at);
+
+Priority: HIGH (blocks production scalability)
+
+1.4 Insufficient Environment Validation
+Location: server/validateEnv.ts:6-13
+
+Issue: Only validates DATABASE_URL, SESSION_SECRET, and ENCRYPTION_KEY. Missing critical security configurations:
+
+STRIPE_WEBHOOK_SECRET (allows payment fraud)
+AUDIT_LOG_SECRET (defaults to ENCRYPTION_KEY, but should be separate)
+CORS_ORIGIN (allows any origin in dev mode)
+SESSION_SECRET minimum entropy not verified
+Risk: Insecure defaults in production deployments
+
+Fix:
+
+const productionEnvSchema = z.object({
+  STRIPE_WEBHOOK_SECRET: z.string().min(32),
+  AUDIT_LOG_SECRET: z.string().min(32),
+  CORS_ORIGIN: z.string().url().array().min(1),
+  SESSION_SECRET: z.string().min(64), // Increase from 32
+  SMTP_HOST: z.string().min(1),
+  SMTP_USER: z.string().min(1),
+  SMTP_PASS: z.string().min(1),
+});
+
+Priority: HIGH
+
+🟡 MEDIUM Risk
+1.5 Weak Admin Password Policy
+Location: server/routes.ts:230-255
+
+Issue:
+
+Customer passwords: 8 characters minimum
+Admin passwords: 12 characters minimum ✅ (good!)
+BUT: Common password check is limited to 4 patterns only
+Risk: Admins have elevated privileges - weak passwords = system compromise
+
+Fix:
+
+// Add comprehensive common password list (top 10,000)
+import { commonPasswords } from './commonPasswords'; // 10k list
+if (commonPasswords.includes(password.toLowerCase())) {
+  return { valid: false, message: "Password is too common" };
+}
+
+Priority: MEDIUM
+
+1.6 Session Cookie Security in Production
+Location: server/firebaseAuth.ts:45-50
+
+Issue:
+
+cookie: {
+  httpOnly: true,  // ✅ Good
+  secure: isProduction,  // ✅ Good
+  maxAge: sessionTtl,
+  sameSite: isProduction ? 'none' : 'lax',  // ⚠️ ISSUE
+}
+
+Risk: sameSite: 'none' in production allows CSRF attacks from third-party sites
+
+Why it's there: Likely for cross-origin requests, but CSRF token should handle this
+
+Fix:
+
+sameSite: 'strict', // Always use strict
+// OR if cross-origin is truly needed:
+sameSite: isProduction ? 'lax' : 'lax', // Never 'none'
+
+Priority: MEDIUM
+
+1.7 File Upload Path Traversal
+Location: server/routes.ts:354-388
+
+Issue: While there's good path traversal protection with realpath checks, the file serving logic allows authenticated + super admin access to ALL files in uploads directory, not just their own spa's files.
+
+Risk: Super admins can access other spas' license documents
+
+Fix:
+
+// Add spa-level isolation
+const [application] = await db.select()
+  .from(adminApplications)
+  .where(eq(adminApplications.licenseUrl, `/uploads/licenses/${filename}`));
+
+if (application && application.userId !== req.user.claims.sub) {
+  // Only super admins can view other users' licenses
+  const user = await storage.getUser(req.user.claims.sub);
+  if (user?.role !== 'super_admin') {
+    return res.status(403).json({ message: 'Access denied' });
+  }
+}
+
+Priority: MEDIUM
+
+1.8 OAuth State Nonce Cleanup Memory Leak
+Location: server/routes.ts:62-72
+
+Issue:
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [nonce, expiry] of usedOAuthNonces.entries()) {
+    if (now > expiry) {
+      usedOAuthNonces.delete(nonce);
+    }
+  }
+}, 5 * 60 * 1000);
+
+Risk:
+
+Memory grows unbounded if OAuth traffic is high
+No monitoring/alerting when Map exceeds thresholds
+Cleanup interval not configurable
+Fix:
+
+// Add bounded Map with LRU eviction
+import LRU from 'lru-cache';
+const usedOAuthNonces = new LRU<string, number>({
+  max: 10000, // Maximum 10k nonces
+  ttl: 10 * 60 * 1000, // 10 min TTL
+});
+
+Priority: MEDIUM
+
+🟢 LOW Risk (Hardening Recommendations)
+1.9 Missing Security Headers
+Currently using Helmet with CSP, but missing:
+
+X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+Referrer-Policy: strict-origin-when-cross-origin
+Fix: Add to Helmet config in server/index.ts
+
+1.10 Audit Log HMAC Secret Shares Key
+Location: server/auditLog.ts:34
+
+const secret = process.env.AUDIT_LOG_SECRET || process.env.ENCRYPTION_KEY;
+
+Best Practice: Separate keys for separate purposes (defense in depth)
+
+Fix: Require AUDIT_LOG_SECRET separately in production
+
+2. Code Quality & Architecture
+🔴 Critical - Scalability Blockers
+2.1 Monolithic routes.ts (6,145 lines)
+Location: server/routes.ts
+
+Issue: Single file contains:
+
+166 API endpoints
+Business logic mixed with routing
+No separation of concerns
+Impossible to test in isolation
+Impact:
+
+Merge conflicts on every feature
+Cannot parallelize development
+Difficult to maintain RBAC consistently
+High cognitive load
+Recommended Structure:
+
+server/
+├── routes/
+│   ├── index.ts (router registration only)
+│   ├── auth.routes.ts
+│   ├── bookings.routes.ts
+│   ├── admin/
+│   │   ├── spas.routes.ts
+│   │   ├── staff.routes.ts
+│   │   ├── customers.routes.ts
+│   │   └── finance.routes.ts
+│   └── public.routes.ts
+├── services/ (business logic)
+│   ├── bookingService.ts
+│   ├── paymentService.ts
+│   ├── notificationService.ts (✅ already exists!)
+│   └── ...
+└── middleware/
+    ├── auth.middleware.ts
+    ├── validation.middleware.ts
+    └── rbac.middleware.ts
+
+Priority: CRITICAL for team scalability
+
+2.2 No Service Layer
+Issue: Business logic scattered across routes (e.g., booking creation, payment processing, notifications)
+
+Impact:
+
+Cannot reuse logic (WhatsApp booking vs web booking duplicates code)
+Cannot test business rules independently
+Violates Single Responsibility Principle
+Fix: Extract services:
+
+// services/bookingService.ts
+export class BookingService {
+  async createBooking(params: CreateBookingParams): Promise<Booking> {
+    // Validate availability
+    // Create booking record
+    // Process payment
+    // Send notifications
+    // Log audit trail
+    return booking;
+  }
+}
+
+Priority: HIGH
+
+2.3 Missing Database Indexes
+Review of schema.ts shows good indexes, but missing:
+
+-- Critical missing indexes for common queries:
+CREATE INDEX idx_bookings_date_status ON bookings(booking_date, status);
+CREATE INDEX idx_customers_spa_email ON customers(spa_id, email);
+CREATE INDEX idx_staff_spa_active ON staff(spa_id, active);
+CREATE INDEX idx_invoices_spa_status_date ON invoices(spa_id, status, issue_date);
+
+Impact: Slow dashboard queries at scale
+
+Priority: MEDIUM
+
+2.4 No Caching Strategy
+Issue:
+
+Spa settings fetched on every request
+Service catalog queried repeatedly
+Staff schedules not cached
+No Redis/Memcached layer
+Impact:
+
+High database load
+Slow response times
+Cannot scale horizontally
+Fix:
+
+import Redis from 'ioredis';
+const redis = new Redis(process.env.REDIS_URL);
+
+// Cache spa settings
+export async function getSpaSettings(spaId: number) {
+  const cached = await redis.get(`spa:${spaId}:settings`);
+  if (cached) return JSON.parse(cached);
+  
+  const settings = await db.select()...;
+  await redis.setex(`spa:${spaId}:settings`, 3600, JSON.stringify(settings));
+  return settings;
+}
+
+Priority: HIGH for production
+
+🟡 Medium - Technical Debt
+2.5 Error Handling Inconsistency
+Issue: Mix of patterns:
+
+handleRouteError() helper (good!)
+Try-catch blocks with custom responses
+Some endpoints return HTML errors, others JSON
+No error tracking (Sentry imported but not used everywhere)
+Fix:
+
+Use handleRouteError() consistently
+Centralize error mapping
+Add Sentry to all error handlers
+2.6 No API Versioning
+Issue: All endpoints are /api/* with no version prefix
+
+Risk: Breaking changes require coordinating client + server deploys
+
+Fix:
+
+app.use('/api/v1', apiRouter);
+// Future: /api/v2 with breaking changes
+
+2.7 Missing Input Sanitization for Logging
+Issue: While PII redaction exists (server/logger.ts), user input is logged directly in some places:
+
+logger.info("License document uploaded", { filename: req.file.filename });
+
+Risk: Log injection attacks, sensitive data in logs
+
+Fix: Sanitize all logged user input
+
+2.8 No Database Migration Strategy
+Issue: Using drizzle-kit push (schema sync) instead of migrations
+
+Risk:
+
+Cannot rollback schema changes
+Data loss if column dropped then re-added
+No audit trail of schema changes
+Fix:
+
+drizzle-kit generate:pg  # Generate migration
+drizzle-kit migrate      # Apply migration
+
+🟢 Low - Code Smells
+2.9 Magic Numbers
+Examples:
+
+5 - max login attempts (line 498)
+15 - lockout minutes (line 498)
+10000 - max file size (line 276)
+375000 - VAT threshold (schema)
+Fix: Extract to constants file
+
+2.10 Commented Code & TODOs
+// TODO: Send OTP via SMS using Twilio (if configured)
+
+Many TODOs scattered throughout. Track in issue tracker instead.
+
+3. Product & Capability Assessment
+✅ Strengths
+Comprehensive Feature Set
+
+Full booking flow (4-step process)
+Multi-tenant architecture
+UAE VAT compliance (FTA-compliant invoicing)
+WhatsApp conversational booking (innovative!)
+Membership packages
+POS system
+Financial reporting
+Advanced Security
+
+CSRF protection (synchronizer token)
+Session fixation prevention
+Email enumeration prevention
+Account lockout
+Rate limiting (multiple tiers)
+Audit logging with cryptographic integrity
+Modern Tech Stack
+
+TypeScript end-to-end
+React + TanStack Query
+Drizzle ORM (type-safe)
+Proper validation (Zod)
+❌ Gaps & Missing Features
+3.1 No Multi-Language Support
+Issue: UAE has diverse population - English, Arabic, Hindi, Urdu, etc.
+
+Fix: i18next is installed but not implemented. Need:
+
+// Add to schema
+spas.defaultLanguage: text("default_language").default("en")
+users.preferredLanguage: text("preferred_language")
+
+Priority: HIGH for UAE market
+
+3.2 No SMS/Email Verification for Staff
+Issue: Staff can be added with any email - no verification
+
+Risk: Typos lead to notifications going to wrong person
+
+Fix: Send verification email when staff added
+
+3.3 Missing Booking Cancellation Flow
+Issue: Bookings can be cancelled, but:
+
+No automated refund processing
+No cancellation fees based on policy
+No waitlist notification when slot opens
+Fix: Implement cancellation workflow with refund logic
+
+3.4 No Customer Self-Service Portal
+Issue: Customers have limited visibility:
+
+Can view bookings
+Cannot reschedule
+Cannot add payment methods
+Cannot view membership details
+Fix: Build customer dashboard
+
+3.5 No Inventory Alerts
+Issue: reorderLevel field exists but no alerts when stock low
+
+Fix: Add cron job to check inventory daily and email admins
+
+3.6 No Backup/Restore Functionality
+Issue: backupLogs table exists but no backup implementation
+
+Risk: Data loss without automated backups
+
+Fix:
+
+// Add cron job
+cron.schedule('0 2 * * *', async () => {
+  await backupDatabase();
+});
+
+3.7 Missing Analytics Dashboard
+Issue: Basic metrics shown, but missing:
+
+Customer lifetime value
+Service popularity trends
+Staff productivity metrics
+Revenue forecasting
+Fix: Build analytics service
+
+3.8 No Mobile App
+Issue: Web-only (responsive design exists)
+
+Opportunity: React Native app reusing API
+
+🔧 Fragile Functionality
+3.9 WhatsApp Booking State Machine
+Issue: State stored in database but no error recovery if conversation fails mid-flow
+
+Risk: Stuck conversations, incomplete bookings
+
+Fix: Add timeout cleanup + error state handling
+
+3.10 Notification Fallback
+Issue: fallbackOrder exists in schema but not fully implemented
+
+Risk: If primary channel fails, notification lost
+
+Fix: Implement cascading fallback
+
+📊 Priority Matrix
+Issue	Severity	Effort	Priority
+Stripe webhook secret	Critical	Low	P0
+OTP in-memory storage	High	Medium	P0
+Environment validation	High	Low	P0
+Monolithic routes.ts	High	High	P1
+Service layer missing	High	High	P1
+SQL injection risk	High	Medium	P1
+Multi-language support	High	Medium	P1
+No caching strategy	Medium	Medium	P2
+Database indexes	Medium	Low	P2
+Customer self-service	Medium	High	P2
+Backup implementation	Medium	Medium	P2
+🎯 Recommended Action Plan
+Week 1-2: Security Critical
+✅ Enforce STRIPE_WEBHOOK_SECRET (2 hours)
+✅ Move OTP storage to database (4 hours)
+✅ Expand environment validation (2 hours)
+✅ Add missing database indexes (2 hours)
+✅ Review and fix SQL template literals (8 hours)
+Month 1: Architecture Refactoring
+✅ Split routes.ts into modules (40 hours)
+✅ Extract service layer (40 hours)
+✅ Implement Redis caching (16 hours)
+✅ Add API versioning (8 hours)
+✅ Set up database migrations (8 hours)
+Month 2: Product Enhancement
+✅ Implement multi-language support (40 hours)
+✅ Build customer self-service portal (60 hours)
+✅ Add automated backups (16 hours)
+✅ Implement notification fallback (16 hours)
+✅ Add inventory alerts (8 hours)
+📝 Conclusion
+SpaBooker demonstrates professional engineering practices with strong security fundamentals, but has critical gaps that must be addressed before production scale. The codebase is currently at the "startup MVP" stage - functional and secure for low-scale use, but needs architectural improvements for enterprise readiness.
+
+Key Takeaways:
+
+Security: B+ grade - strong baseline, critical payment security gap
+Architecture: C+ grade - needs refactoring for scalability
+Product: B grade - comprehensive features, missing localization and self-service
+Estimated Effort to Production-Ready: 3-4 developer-months
+
+Biggest Risk: Stripe webhook vulnerability enables payment fraud
+Biggest Opportunity: WhatsApp booking is unique differentiator - invest here
+
