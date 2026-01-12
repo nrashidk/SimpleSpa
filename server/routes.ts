@@ -6,8 +6,9 @@ import { LRUCache } from "lru-cache";
 import twilio from "twilio";
 import { storage } from "./storage";
 import { db } from "./db";
-import { users, spas } from "@shared/schema";
-import { eq } from "drizzle-orm";
+import { users, spas, spaNotificationCredentials } from "@shared/schema";
+import { eq, and } from "drizzle-orm";
+import rateLimit from "express-rate-limit";
 import { decryptJSON } from "./encryptionService";
 import { setupAuth, isAuthenticated, isAdmin, isSuperAdmin, injectAdminSpa, enforceSetupWizard, ensureSetupComplete } from "./firebaseAuth";
 import { loginLimiter, bookingLimiter, apiLimiter, validateCsrf, ensureCsrfToken } from "./index";
@@ -4584,12 +4585,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // ==================== NOTIFICATION PROVIDER MANAGEMENT ====================
   
-  // Validate provider credentials (admin only)
+  // Validate provider credentials (admin only) - Enhanced with account info
   app.post("/api/admin/notification-providers/validate", isAdmin, async (req, res) => {
     try {
       const { provider, channel, credentials } = req.body;
       
-      let result;
+      let result: any;
       
       if (channel === 'email') {
         if (provider === 'sendgrid' || provider === 'resend') {
@@ -4601,10 +4602,47 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       } else if (channel === 'sms' || channel === 'whatsapp') {
         if (provider === 'twilio') {
-          result = await validateTwilioCredentials(
+          const { twilioAPIService } = await import('./twilioService');
+          
+          const validation = await twilioAPIService.validateCredentials(
             credentials.accountSid,
             credentials.authToken
           );
+          
+          if (!validation.valid) {
+            return res.status(400).json({ 
+              valid: false, 
+              error: validation.error,
+              errorCode: validation.errorCode,
+              solution: validation.solution,
+            });
+          }
+          
+          const numbersResult = await twilioAPIService.getWhatsAppNumbers(
+            credentials.accountSid,
+            credentials.authToken
+          );
+          
+          let preflightChecks = null;
+          if (credentials.fromPhone) {
+            preflightChecks = await twilioAPIService.runPreflightChecks(
+              credentials.accountSid,
+              credentials.authToken,
+              credentials.fromPhone
+            );
+          }
+          
+          return res.json({
+            valid: true,
+            accountInfo: validation.accountInfo,
+            whatsappNumbers: numbersResult.numbers,
+            preflightChecks,
+            details: {
+              balance: validation.accountInfo?.balance,
+              status: validation.accountInfo?.status,
+              accountName: validation.accountInfo?.accountName,
+            },
+          });
         } else if (provider === 'msg91') {
           result = await validateMsg91Credentials(credentials.authKey);
         } else {
@@ -4621,6 +4659,194 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     } catch (error) {
       handleRouteError(res, error, "Failed to validate credentials");
+    }
+  });
+
+  // Auto-configure Twilio webhook (admin only)
+  app.post("/api/admin/notification-providers/configure-webhook", isAdmin, injectAdminSpa, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const spaId = req.adminSpa.id;
+      const { phoneNumberSid } = req.body;
+      
+      if (!phoneNumberSid) {
+        return res.status(400).json({ message: 'Phone number SID is required' });
+      }
+
+      const [credentials] = await db
+        .select()
+        .from(spaNotificationCredentials)
+        .where(
+          and(
+            eq(spaNotificationCredentials.spaId, spaId),
+            eq(spaNotificationCredentials.channel, 'whatsapp'),
+            eq(spaNotificationCredentials.status, 'active')
+          )
+        )
+        .limit(1);
+
+      if (!credentials?.encryptedCredentials) {
+        return res.status(404).json({ message: 'WhatsApp credentials not found. Save credentials first.' });
+      }
+
+      const decrypted = decryptJSON<{ accountSid: string; authToken: string }>(credentials.encryptedCredentials);
+      const webhookUrl = `https://${req.get('host')}/api/webhooks/whatsapp/inbound`;
+
+      const { twilioAPIService } = await import('./twilioService');
+      const result = await twilioAPIService.configureWebhook(
+        decrypted.accountSid,
+        decrypted.authToken,
+        phoneNumberSid,
+        webhookUrl
+      );
+
+      if (!result.success) {
+        return res.status(400).json({ 
+          success: false, 
+          error: result.error,
+          solution: result.solution,
+        });
+      }
+
+      await AuditLogger.log({
+        userId,
+        spaId,
+        action: 'UPDATE',
+        entityType: 'notification_provider',
+        entityId: credentials.id,
+        changes: {
+          after: {
+            webhookConfigured: true,
+            webhookUrl,
+            phoneNumberSid,
+          },
+        },
+        metadata: { configuredAt: new Date().toISOString() },
+      });
+
+      res.json({
+        success: true,
+        webhookUrl,
+        message: 'Webhook configured successfully',
+      });
+    } catch (error) {
+      handleRouteError(res, error, "Failed to configure webhook");
+    }
+  });
+
+  // Test WhatsApp configuration (admin only) - Rate limited
+  const whatsappTestLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 3,
+    message: { message: 'Too many test messages. Please wait a minute before trying again.' },
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
+
+  app.post("/api/admin/notification-providers/test-whatsapp", isAdmin, injectAdminSpa, whatsappTestLimiter, async (req: any, res) => {
+    try {
+      const spaId = req.adminSpa.id;
+      const spaName = req.adminSpa.name;
+      const { testPhoneNumber } = req.body;
+
+      if (!testPhoneNumber) {
+        return res.status(400).json({ message: 'Test phone number is required' });
+      }
+
+      const phoneRegex = /^\+[1-9]\d{1,14}$/;
+      if (!phoneRegex.test(testPhoneNumber)) {
+        return res.status(400).json({ 
+          message: 'Invalid phone format. Use E.164 format (e.g., +14155551234)',
+        });
+      }
+
+      const [credentials] = await db
+        .select()
+        .from(spaNotificationCredentials)
+        .where(
+          and(
+            eq(spaNotificationCredentials.spaId, spaId),
+            eq(spaNotificationCredentials.channel, 'whatsapp'),
+            eq(spaNotificationCredentials.status, 'active')
+          )
+        )
+        .limit(1);
+
+      if (!credentials?.encryptedCredentials) {
+        return res.status(404).json({ message: 'WhatsApp credentials not found' });
+      }
+
+      const decrypted = decryptJSON<{ accountSid: string; authToken: string }>(credentials.encryptedCredentials);
+
+      const { twilioAPIService } = await import('./twilioService');
+      const result = await twilioAPIService.testWebhook(
+        decrypted.accountSid,
+        decrypted.authToken,
+        credentials.fromPhone || '',
+        testPhoneNumber,
+        `✅ WhatsApp Test from ${spaName}\n\nYour WhatsApp booking is configured correctly! Reply "hi" to start a booking.`
+      );
+
+      if (!result.success) {
+        return res.status(400).json({ 
+          success: false, 
+          error: result.error,
+          solution: result.solution,
+        });
+      }
+
+      res.json({
+        success: true,
+        messageSid: result.messageSid,
+        message: 'Test message sent successfully. Check your WhatsApp!',
+      });
+    } catch (error) {
+      handleRouteError(res, error, "Failed to send test message");
+    }
+  });
+
+  // WhatsApp health check (admin only)
+  app.get("/api/admin/notification-providers/health-check", isAdmin, injectAdminSpa, async (req: any, res) => {
+    try {
+      const spaId = req.adminSpa.id;
+      
+      const { twilioAPIService } = await import('./twilioService');
+      const healthCheck = await twilioAPIService.getWebhookHealthCheck(spaId);
+
+      const webhookUrl = `https://${req.get('host')}/api/webhooks/whatsapp/inbound`;
+
+      res.json({
+        ...healthCheck,
+        webhookUrl,
+      });
+    } catch (error) {
+      handleRouteError(res, error, "Failed to check WhatsApp health");
+    }
+  });
+
+  // WhatsApp diagnostics (admin only)
+  app.get("/api/admin/notification-providers/diagnostics", isAdmin, injectAdminSpa, async (req: any, res) => {
+    try {
+      const spaId = req.adminSpa.id;
+      
+      const { twilioAPIService } = await import('./twilioService');
+      const diagnostics = await twilioAPIService.getDiagnostics(spaId);
+
+      res.json({
+        diagnostics,
+        sandboxInstructions: {
+          title: 'WhatsApp Sandbox Setup',
+          steps: [
+            'Go to Twilio Console → Messaging → Try it out → Send a WhatsApp message',
+            'Send the join code (e.g., "join example-word") from your phone to the sandbox number',
+            'Once joined, you can receive test messages from your sandbox',
+            'For production, apply for WhatsApp Business API approval',
+          ],
+          link: 'https://console.twilio.com/us1/develop/sms/try-it-out/whatsapp-learn',
+        },
+      });
+    } catch (error) {
+      handleRouteError(res, error, "Failed to fetch diagnostics");
     }
   });
 

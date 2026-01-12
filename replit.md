@@ -63,6 +63,33 @@ WhatsApp Multi-Tenant Isolation (Completed 2026-01-11):
 - **Customer/Booking Isolation:** All review flows filter customers and bookings by spaId
 - **Server-Initiated Flows:** startReviewFlow, sendIdleGatedReviewPrompt require valid spa credentials
 
+WhatsApp Self-Service Configuration (Completed 2026-01-12):
+- **TwilioAPIService (server/twilioService.ts):** Comprehensive Twilio API integration service
+  - validateCredentials() - Validates credentials and returns account info, balance
+  - getPhoneNumbers() / getWhatsAppNumbers() - Lists SMS-capable numbers from Twilio
+  - configureWebhook() - Auto-configures webhook URL via Twilio API
+  - testWebhook() - Sends test WhatsApp message
+  - runPreflightChecks() - Validates format, account status, balance, phone format before saving
+  - getWebhookHealthCheck() - Returns connection status, last message timestamp, 24h message count
+  - getDiagnostics() - Returns diagnostic entries for troubleshooting
+  - COMMON_ERRORS map with actionable solutions for 15+ Twilio error codes
+- **Enhanced API Endpoints:**
+  - POST /api/admin/notification-providers/validate - Returns account info, balance, detected numbers, preflight checks
+  - POST /api/admin/notification-providers/configure-webhook - Auto-configures webhook via Twilio API
+  - POST /api/admin/notification-providers/test-whatsapp - Sends test message (rate limited: 3/min)
+  - GET /api/admin/notification-providers/health-check - Returns connection status, message stats
+  - GET /api/admin/notification-providers/diagnostics - Returns diagnostic logs and sandbox instructions
+- **Enhanced Frontend (NotificationProviderConfig.tsx):**
+  - Connection status indicator (healthy/warning/error) with 24h message count
+  - Setup completion checklist with 4-step progress tracking
+  - Webhook URL display with copy-to-clipboard button
+  - Auto-detect phone numbers dropdown
+  - One-click webhook auto-configuration button
+  - Test message functionality with validation
+  - WhatsApp sandbox setup instructions
+  - Diagnostic logs viewer
+  - Pre-flight checks display (credentials, account, balance, phone format)
+
 ## External Dependencies
 -   **Firebase Authentication:** User authentication via Google Sign-in.
 -   **PostgreSQL (Neon-backed):** Primary database.
