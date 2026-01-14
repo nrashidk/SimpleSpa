@@ -303,9 +303,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json({ csrfToken: (req.session as any).csrfToken });
   });
 
-  // File upload endpoint for license documents
-  // SECURITY: Requires authentication to prevent unauthorized uploads
-  app.post('/api/upload/license', isAuthenticated, upload.single('file'), async (req, res) => {
+  // File upload endpoint for license documents during admin registration
+  // Note: This endpoint is used during registration before authentication
+  // Rate limiting is applied via apiLimiter to prevent abuse
+  app.post('/api/upload/license', upload.single('file'), async (req, res) => {
     try {
       if (!req.file) {
         return res.status(400).json({ message: 'No file uploaded' });
