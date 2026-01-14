@@ -1,0 +1,163 @@
+ROOT CAUSES:
+Issue #1: Missing Cookie Domain Configuration ⚠️
+Problem: The session cookie in server/replitAuth.ts:40-44 doesn't specify a domain attribute. This means cookies are tied to the exact hostname that set them and won't work across subdomains or when proxies are involved.
+
+Solution:
+
+// In server/replitAuth.ts, line 40-44, update the cookie configuration:
+cookie: {
+  httpOnly: true,
+  secure: true,
+  maxAge: sessionTtl,
+  domain: process.env.COOKIE_DOMAIN || undefined, // Add this
+  sameSite: 'lax' // Add this explicitly
+}
+
+Environment variable to add:
+
+# In production .env
+COOKIE_DOMAIN=.lookforspa.com  # Note the leading dot for all subdomains
+
+Issue #2: Missing CORS Configuration ❌
+Problem: There's NO CORS middleware configured in your Express app. The frontend makes requests with credentials: "include", but without proper CORS headers, browsers will block the session cookies from being sent/received.
+
+Solution:
+Add CORS middleware in server/index.ts after line 11:
+
+import cors from 'cors';
+
+// After line 11 (app.use(express.urlencoded...))
+app.use(cors({
+  origin: process.env.CORS_ORIGIN || 'https://lookforspa.com',
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
+Install cors package first:
+
+npm install cors
+npm install --save-dev @types/cors
+
+Environment variable:
+
+CORS_ORIGIN=https://lookforspa.com
+
+Issue #3: Trust Proxy Misconfiguration 🔧
+Problem: app.set("trust proxy", 1) in replitAuth.ts:71 assumes only 1 proxy layer. Production environments often have multiple proxies (CDN, load balancer, reverse proxy), causing Express to misidentify the client's real IP and protocol.
+
+Solution:
+
+// In server/replitAuth.ts, line 71, change to:
+app.set("trust proxy", true); // Trust all proxies in production
+
+Issue #4: HTTPS/Secure Cookie Enforcement 🔒
+Problem: secure: true requires HTTPS. If your domain isn't properly configured with valid SSL/TLS, cookies won't be set or sent.
+
+Verification needed:
+
+Ensure https://lookforspa.com has a valid SSL certificate
+Check that all redirects go to HTTPS (not HTTP)
+Verify no mixed content warnings in browser console
+Conditional solution (if you need HTTP support for testing):
+
+cookie: {
+  httpOnly: true,
+  secure: process.env.NODE_ENV === 'production', // Only require HTTPS in production
+  maxAge: sessionTtl,
+  domain: process.env.COOKIE_DOMAIN || undefined,
+  sameSite: 'lax'
+}
+
+Issue #5: Missing REPLIT_DOMAINS Environment Variable 🚨
+Problem: Line 12-14 of server/replitAuth.ts throws an error if REPLIT_DOMAINS is missing. This would prevent your app from starting.
+
+Current check:
+
+if (!process.env.REPLIT_DOMAINS) {
+  throw new Error("Environment variable REPLIT_DOMAINS not provided");
+}
+
+Solution:
+Add to your production .env:
+
+REPLIT_DOMAINS=lookforspa.com,www.lookforspa.com
+ISSUER_URL=https://replit.com/oidc
+REPL_ID=your-repl-id
+
+OR make it optional for email/password login:
+
+if (!process.env.REPLIT_DOMAINS) {
+  console.warn("REPLIT_DOMAINS not set - OAuth login will be disabled");
+  // Skip OAuth setup but allow email/password login to work
+}
+
+Issue #6: Session Store Connection 💾
+Problem: The session store uses connect-pg-simple with DATABASE_URL. If the production database connection string is incorrect or the sessions table doesn't exist, sessions won't persist.
+
+Verification needed:
+
+# Ensure these are set in production:
+DATABASE_URL=postgresql://user:password@host:5432/database_name
+SESSION_SECRET=your-super-secret-session-key-change-this-in-production
+
+Check database:
+
+-- Verify the sessions table exists:
+SELECT * FROM pg_tables WHERE tablename = 'sessions';
+
+COMPLETE PRODUCTION .ENV CONFIGURATION FOR LOOKFORSPA.COM:
+# Database
+DATABASE_URL=postgresql://user:password@host:5432/database_name
+
+# Session & Security
+SESSION_SECRET=your-super-secret-session-key-minimum-32-characters
+COOKIE_DOMAIN=.lookforspa.com
+CORS_ORIGIN=https://lookforspa.com
+
+# Server
+NODE_ENV=production
+PORT=5000
+
+# Replit Auth (if using)
+REPLIT_DOMAINS=lookforspa.com,www.lookforspa.com
+ISSUER_URL=https://replit.com/oidc
+REPL_ID=your-repl-id
+
+DEBUGGING STEPS:
+Check browser console when logging in on lookforspa.com:
+
+Look for CORS errors (red text mentioning "CORS policy")
+Check Network tab → find /api/admin/login request
+Verify response has Set-Cookie header
+Check if cookie appears in Application → Cookies
+Common symptoms:
+
+No Set-Cookie header: CORS or HTTPS issue
+Cookie set but not sent: Domain/SameSite issue
+401 Unauthorized immediately: Cookie not being sent with requests
+Quick test:
+Open browser DevTools → Console on lookforspa.com:
+
+fetch('/api/admin/login', {
+  method: 'POST',
+  headers: {'Content-Type': 'application/json'},
+  credentials: 'include',
+  body: JSON.stringify({email: 'your-admin@email.com', password: 'your-password'})
+}).then(r => r.json()).then(console.log)
+
+Check for CORS errors or cookie issues.
+
+PRIORITY FIXES:
+Immediate (Critical):
+
+Install and add CORS middleware ← #1 Priority
+Set COOKIE_DOMAIN=.lookforspa.com environment variable
+Verify HTTPS is working properly on lookforspa.com
+Important:
+4. Add REPLIT_DOMAINS=lookforspa.com,www.lookforspa.com or make it optional
+5. Verify DATABASE_URL and sessions table exist
+6. Update trust proxy setting to true
+
+The login failures are almost certainly due to missing CORS configuration combined with incorrect cookie domain settings for lookforspa.com.
+
