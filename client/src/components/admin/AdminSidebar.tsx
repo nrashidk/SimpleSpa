@@ -44,6 +44,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useAuth } from "@/hooks/useAuth";
 import { useStaffPermissions } from "@/hooks/useStaffPermissions";
+import { SpaSelector } from "@/components/SpaSelector";
 
 const menuItems = [
   {
@@ -179,6 +180,8 @@ export function AdminSidebar() {
           </div>
         </div>
       </SidebarHeader>
+
+      <SpaSelector />
 
       <SidebarContent>
         <SidebarGroup>

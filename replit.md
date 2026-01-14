@@ -63,6 +63,28 @@ WhatsApp Multi-Tenant Isolation (Completed 2026-01-11):
 - **Customer/Booking Isolation:** All review flows filter customers and bookings by spaId
 - **Server-Initiated Flows:** startReviewFlow, sendIdleGatedReviewPrompt require valid spa credentials
 
+Super Admin Spa Selector (Completed 2026-01-14):
+- **SpaContext (client/src/contexts/SpaContext.tsx):** React context managing selected spa state
+  - Super admin can view/manage any spa via dropdown selector in sidebar
+  - Regular admins automatically use their linked spa (no selector visible)
+  - Global spa ID synced with queryClient for API headers
+- **API Changes:**
+  - GET /api/admin/spas - Lists all spas for super admin spa selector
+  - GET/PUT /api/admin/settings - Respects X-Spa-Id header for super admin
+  - getEffectiveSpaId helper - Returns correct spa based on user role
+- **Multi-tenant Isolation:**
+  - Regular admins isolated to their spa (header ignored, uses adminSpaId)
+  - Super admin must select spa to view spa-specific data
+  - Queries deferred until spa selected (enabled flag in useQuery)
+  - Query cache invalidated when spa selection changes
+
+Cloudinary File Storage (Completed 2026-01-14):
+- **cloudinaryService.ts:** Handles file uploads to Cloudinary cloud storage
+  - isCloudinaryConfigured() - Checks if credentials are available
+  - uploadToCloudinary() - Uploads file and returns secure URL
+  - Falls back to local storage if Cloudinary not configured
+- **Use Cases:** Business license uploads, spa logos, cover images, staff avatars
+
 WhatsApp Self-Service Configuration (Completed 2026-01-12):
 - **TwilioAPIService (server/twilioService.ts):** Comprehensive Twilio API integration service
   - validateCredentials() - Validates credentials and returns account info, balance

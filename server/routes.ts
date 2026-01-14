@@ -1834,6 +1834,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Super Admin-only routes (protected with isSuperAdmin middleware)
+  
+  // Get all spas for super admin spa selector
+  app.get("/api/admin/spas", isSuperAdmin, async (req, res) => {
+    try {
+      const allSpas = await db.select({
+        id: spas.id,
+        spaName: spas.name,
+        contactEmail: spas.contactEmail,
+        active: spas.active,
+        setupComplete: spas.setupComplete,
+      }).from(spas).orderBy(spas.name);
+      
+      res.json(allSpas);
+    } catch (error) {
+      handleRouteError(res, error, "Failed to fetch spas");
+    }
+  });
+  
   app.get("/api/super-admin/applications", isSuperAdmin, async (req, res) => {
     try {
       const { status } = req.query;
@@ -2208,10 +2226,55 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json({ message: "Admin access granted" });
   });
 
+  // Helper function to get spa ID based on user role
+  // Super admin can use X-Spa-Id header to select a spa
+  // Regular admin uses their linked spa
+  async function getEffectiveSpaId(req: any): Promise<number | null> {
+    const user = await storage.getUser((req.user as any)?.id);
+    if (!user) return null;
+    
+    if (user.role === 'super_admin') {
+      const headerSpaId = req.headers['x-spa-id'];
+      if (headerSpaId) {
+        const spaId = parseInt(headerSpaId, 10);
+        if (!isNaN(spaId)) {
+          const spa = await storage.getSpaById(spaId);
+          if (spa) return spaId;
+        }
+      }
+      return null;
+    }
+    
+    return user.adminSpaId || null;
+  }
+
   // Spa Settings routes
   app.get("/api/admin/settings", isAdmin, async (req, res) => {
     try {
-      const settings = await storage.getSpaSettings();
+      const spaId = await getEffectiveSpaId(req);
+      if (!spaId) {
+        return res.status(400).json({ message: "No spa selected" });
+      }
+      
+      const spa = await storage.getSpaById(spaId);
+      if (!spa) {
+        return res.status(404).json({ message: "Spa not found" });
+      }
+      
+      const settings = {
+        id: spa.id,
+        spaName: spa.name,
+        contactEmail: spa.contactEmail,
+        contactPhone: spa.contactPhone,
+        address: spa.address,
+        businessHours: spa.businessHours,
+        currency: spa.currency,
+        taxRate: spa.taxRate,
+        logoUrl: spa.logoUrl,
+        brandColor: null,
+        updatedAt: spa.updatedAt,
+      };
+      
       res.json(settings);
     } catch (error) {
       logger.error("Error fetching spa settings", { error: error instanceof Error ? error.message : 'Unknown' });
@@ -2222,9 +2285,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.put("/api/admin/settings", isAdmin, async (req, res) => {
     try {
       logger.debug("PUT /api/admin/settings - updating settings");
-      const validatedData = insertSpaSettingsSchema.partial().parse(req.body);
-      const settings = await storage.updateSpaSettings(validatedData as any);
-      logger.info("Spa settings updated successfully");
+      const spaId = await getEffectiveSpaId(req);
+      if (!spaId) {
+        return res.status(400).json({ message: "No spa selected" });
+      }
+      
+      const { spaName, contactEmail, contactPhone, address, businessHours, currency, taxRate, logoUrl } = req.body;
+      
+      const updateData: any = {};
+      if (spaName !== undefined) updateData.name = spaName;
+      if (contactEmail !== undefined) updateData.contactEmail = contactEmail;
+      if (contactPhone !== undefined) updateData.contactPhone = contactPhone;
+      if (address !== undefined) updateData.address = address;
+      if (businessHours !== undefined) updateData.businessHours = businessHours;
+      if (currency !== undefined) updateData.currency = currency;
+      if (taxRate !== undefined) updateData.taxRate = taxRate;
+      if (logoUrl !== undefined) updateData.logoUrl = logoUrl;
+      updateData.updatedAt = new Date();
+      
+      const updatedSpa = await storage.updateSpa(spaId, updateData);
+      
+      const settings = {
+        id: updatedSpa?.id,
+        spaName: updatedSpa?.name,
+        contactEmail: updatedSpa?.contactEmail,
+        contactPhone: updatedSpa?.contactPhone,
+        address: updatedSpa?.address,
+        businessHours: updatedSpa?.businessHours,
+        currency: updatedSpa?.currency,
+        taxRate: updatedSpa?.taxRate,
+        logoUrl: updatedSpa?.logoUrl,
+        brandColor: null,
+        updatedAt: updatedSpa?.updatedAt,
+      };
+      
+      logger.info("Spa settings updated successfully", { spaId });
       res.json(settings);
     } catch (error) {
       logger.error("PUT /api/admin/settings - Error", { error: error instanceof Error ? error.message : 'Unknown' });

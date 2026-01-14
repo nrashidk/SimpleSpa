@@ -7,6 +7,17 @@ async function throwIfResNotOk(res: Response) {
   }
 }
 
+// Selected Spa ID for super admin (global state accessible by fetch functions)
+let selectedSpaId: number | null = null;
+
+export function setSelectedSpaId(id: number | null) {
+  selectedSpaId = id;
+}
+
+export function getSelectedSpaId(): number | null {
+  return selectedSpaId;
+}
+
 // CSRF Token management - cached token to avoid redundant fetches
 let csrfToken: string | null = null;
 let csrfTokenPromise: Promise<string> | null = null;
@@ -64,6 +75,11 @@ export async function apiRequest(
     }
   }
   
+  // Add spa ID header for super admin spa selection
+  if (selectedSpaId) {
+    headers["X-Spa-Id"] = selectedSpaId.toString();
+  }
+  
   const res = await fetch(url, {
     method,
     headers,
@@ -81,8 +97,16 @@ export const getQueryFn: <T>(options: {
 }) => QueryFunction<T> =
   ({ on401: unauthorizedBehavior }) =>
   async ({ queryKey }) => {
+    const headers: Record<string, string> = {};
+    
+    // Add spa ID header for super admin spa selection
+    if (selectedSpaId) {
+      headers["X-Spa-Id"] = selectedSpaId.toString();
+    }
+    
     const res = await fetch(queryKey.join("/") as string, {
       credentials: "include",
+      headers,
     });
 
     if (unauthorizedBehavior === "returnNull" && res.status === 401) {

@@ -17,6 +17,7 @@ type InsertServiceExtraTime = any;
 import NotificationProviderConfig from "@/components/NotificationProviderConfig";
 import NotificationSettings from "@/components/NotificationSettings";
 import { Badge } from "@/components/ui/badge";
+import { useSpaContext } from "@/contexts/SpaContext";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   Dialog,
@@ -44,15 +45,21 @@ import {
 
 export default function AdminSettings() {
   const { toast } = useToast();
+  const { selectedSpaId, isSuperAdmin, isLoading: spaLoading } = useSpaContext();
+  
+  // Defer queries until spa is selected (for super admin)
+  const queriesEnabled = !isSuperAdmin || !!selectedSpaId;
   
   // Fetch existing settings
   const { data: settings, isLoading } = useQuery<SpaSettings>({
     queryKey: ["/api/admin/settings"],
+    enabled: queriesEnabled,
   });
 
   // Fetch integrations for current spa
   const { data: integrations = [] } = useQuery<SpaIntegration[]>({
     queryKey: ["/api/integrations"],
+    enabled: queriesEnabled,
   });
 
   // Fetch VAT settings
@@ -62,6 +69,7 @@ export default function AdminSettings() {
     vatRegistrationDate: Date | null;
   }>({
     queryKey: ["/api/admin/vat-settings"],
+    enabled: queriesEnabled,
   });
 
   // Fetch VAT threshold reminder settings
@@ -72,16 +80,19 @@ export default function AdminSettings() {
     percentageOfThreshold?: number;
   }>({
     queryKey: ["/api/admin/vat-threshold-reminder"],
+    enabled: queriesEnabled,
   });
 
   // Fetch services for extra time configuration
   const { data: services = [] } = useQuery<Service[]>({
     queryKey: ["/api/admin/services"],
+    enabled: queriesEnabled,
   });
 
   // Fetch extra time configurations
   const { data: extraTimes = [] } = useQuery<ServiceExtraTime[]>({
     queryKey: ["/api/admin/service-extra-time"],
+    enabled: queriesEnabled,
   });
 
   // Check for OAuth callback results
