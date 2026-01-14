@@ -36,6 +36,7 @@ import fs from "fs";
 import bcrypt from "bcryptjs";
 import { logger, securityLogger, redactEmail } from "./logger";
 import { isCommonPassword } from "./commonPasswords";
+import { uploadToCloudinary, isCloudinaryConfigured } from "./cloudinaryService";
 import {
   insertSpaSettingsSchema,
   insertServiceCategorySchema,
@@ -337,9 +338,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: 'Invalid file content. File type does not match extension.' });
       }
       
-      // Return the file URL (relative path that can be accessed)
-      const fileUrl = `/uploads/licenses/${req.file.filename}`;
-      logger.info("License document uploaded", { filename: req.file.filename });
+      let fileUrl: string;
+      
+      // Use Cloudinary if configured, otherwise fall back to local storage
+      if (isCloudinaryConfigured()) {
+        try {
+          const result = await uploadToCloudinary(req.file.path, 'licenses');
+          fileUrl = result.url;
+          // Delete local temp file after successful Cloudinary upload
+          fs.unlinkSync(req.file.path);
+          logger.info("License document uploaded to Cloudinary", { url: fileUrl });
+        } catch (cloudinaryError) {
+          logger.error('Cloudinary upload failed, using local storage', { 
+            error: cloudinaryError instanceof Error ? cloudinaryError.message : 'Unknown' 
+          });
+          // Fall back to local storage
+          fileUrl = `/uploads/licenses/${req.file.filename}`;
+        }
+      } else {
+        // Local storage (development or when Cloudinary not configured)
+        fileUrl = `/uploads/licenses/${req.file.filename}`;
+        logger.info("License document uploaded locally", { filename: req.file.filename });
+      }
+      
       res.json({ fileUrl });
     } catch (error) {
       logger.error('License upload error', { error: error instanceof Error ? error.message : 'Unknown' });
