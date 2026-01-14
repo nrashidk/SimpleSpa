@@ -50,12 +50,13 @@ export function getSession() {
       secure: isProduction,
       maxAge: sessionTtl,
       sameSite: 'lax', // Always use 'lax' - CSRF tokens handle cross-origin protection
+      domain: process.env.COOKIE_DOMAIN || undefined, // Support custom domain cookies
     },
   });
 }
 
 export async function setupAuth(app: Express) {
-  app.set("trust proxy", 1);
+  app.set("trust proxy", true); // Trust all proxies in production (CDN, load balancer, reverse proxy)
   app.use(getSession());
   
   initializeFirebase();
