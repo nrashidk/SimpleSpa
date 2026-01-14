@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -32,6 +32,7 @@ type AdminApplication = {
 export default function AdminLogin() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   
   // Application form
   const [spaName, setSpaName] = useState("");
@@ -86,6 +87,9 @@ export default function AdminLogin() {
       if (loginData.csrfToken) {
         setCsrfToken(loginData.csrfToken);
       }
+      
+      // Invalidate auth query to force refetch with new session
+      await queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
       
       // Super admins bypass setup wizard and go straight to admin panel
       if (loginData.user?.role === 'super_admin') {
